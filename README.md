@@ -40,3 +40,6 @@ This repo contains the work to model flow along a variety of flowline transects 
 - scripts  
   
     Contains a py file that has uses functions to do some of the processing for firedrake modeling that the processing notebooks use.
+
+
+Note that imagery and DEMs are not stored here, but can be provided upon request.
