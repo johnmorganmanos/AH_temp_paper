@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from IPython.display import HTML
 import firedrake
-from firedrake import Constant, inner, sqrt, tr, grad, div, as_vector, exp,sym, as_vector, dx, ds, Mesh, Function, project, TransferManager
+from firedrake import Constant, inner, sqrt, tr, grad, div, as_vector, exp,sym, as_vector, dx, ds,ds_b, Mesh, Function, project, TransferManager
 import meshpy, meshpy.geometry, meshpy.triangle
 import irksome
 from irksome import Dt
@@ -26,6 +26,7 @@ import itertools
 import xarray
 import dtscalibration
 import glob
+import ufl
 
 # Constants
 spy = 365.25 * 24 * 60 * 60
@@ -204,13 +205,16 @@ def initial_conditions(mesh, climate_trend):
 
     return x, z, ϕ, T, y, u, V, bcs_temp
 
-def viscosity_updater(x, z, ϕ, T, y, u, V, bcs_temp, mesh):
+def viscosity_updater(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial):
     velocity_field = y.sub(0).dat.data
     temp_field = T.dat.data
-    
+    μ_new_field = Function(V).project(μ_initial)
+
     for i in range(100):
         prev_temp_field = copy.deepcopy(temp_field)
         prev_velocity = copy.deepcopy(velocity_field)
+        prev_μ_new_field = copy.deepcopy(μ_new_field)
+
         ϵ_ = sym(grad(u))
         
         ϵ_effective = sqrt((inner(ϵ_, ϵ_)+tr(ϵ_)**2)*0.5)
@@ -280,7 +284,7 @@ def viscosity_updater(x, z, ϕ, T, y, u, V, bcs_temp, mesh):
         temp_field = T.dat.data
     
         ### Calculate the residuals in the temp field ###
-        residual = np.sum(np.abs((prev_temp_field - temp_field)))/temp_field.shape[0]
+        residual = np.sum(np.abs((prev_μ_new_field - temp_field)))/μ_new_field.shape[0]
         print(residual)
         if residual < 0.01: #If the residual is less than the 0.01 m/yr, let's call it good.
             break
@@ -296,5 +300,100 @@ def starting_stuff(mesh):
 
     return x, z, V, T, ϕ
 
-def climate_modeler():
-    return
+def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh):
+    
+    from ufl import Measure
+    dx = ufl.Measure("dx", domain=mesh)
+    
+    velocity_field = y.sub(0).dat.data
+    temp_field = T.dat.data
+    
+    for i in range(100):
+        prev_temp_field = copy.deepcopy(temp_field)
+        prev_velocity = copy.deepcopy(velocity_field)
+        ϵ_ = sym(grad(u))
+        
+        ϵ_effective = sqrt((inner(ϵ_, ϵ_)+tr(ϵ_)**2)*0.5)
+        
+        # A_new = A*exp(-((Q + (p*act_vol))/((T+273.15)*R)))
+    
+        A_new = A*exp(-(Q/R*( 1/(T+273.15) - 1/263))) #Does not account for melting point depression
+        μ_new =  0.5*(A_new**(-1/n))*(ϵ_effective**((1/n)-1))
+        
+        μ_new_field = Function(V).project(μ_new)
+        ϵ_effective_field = Function(V).project(ϵ_effective)
+        A_new_field = Function(V).project(A_new)
+    
+        def ε(u):
+            return sym(grad(u))
+        
+        ### Build the stokes flow model ###
+        
+        pressure_space = firedrake.FunctionSpace(mesh, "CG", 1)
+        velocity_space = firedrake.VectorFunctionSpace(mesh, "CG", 3)
+        Y = velocity_space * pressure_space
+        
+        y = firedrake.Function(Y)
+        u, p = firedrake.split(y)
+        v, q = firedrake.TestFunctions(y.function_space())
+        
+        τ = 2* μ_new * ε(u)#  2 * μ_new_field *  ϵ_
+        g = as_vector((0, 0, grav))
+        f =  ρ * g
+        F_momentum = (inner(τ, ε(v)) - q * div(u) - p * div(v) - inner(f, v)) * dx
+    
+        basis = firedrake.VectorSpaceBasis(constant=True, comm=firedrake.COMM_WORLD)
+        nullspace = firedrake.MixedVectorSpaceBasis(Y, [Y.sub(0), basis])
+        
+        face_ids = ['top', 'bottom', 1, 2, 3, 4]
+        bc_stokes = []
+        for id in face_ids:
+            if id == 'top': pass # Skip the top face (id 5) for now
+            else:
+                bc = firedrake.DirichletBC(Y.sub(0), as_vector((0, 0, 0)), id) # No flow on the boundary
+                bc_stokes.append(bc)
+
+        stokes_problem = firedrake.NonlinearVariationalProblem(F_momentum, y, bc_stokes)
+        parameters = {
+            "nullspace": nullspace,
+            "solver_parameters": {
+                "ksp_type": "preonly",
+                "pc_type": "lu",
+                "pc_factor_mat_solver_type": "mumps",
+            },
+        }
+        stokes_solver = firedrake.NonlinearVariationalSolver(stokes_problem, **parameters)
+    
+        stokes_solver.solve()
+    
+        
+        ### Get the new velocity field solved for ###
+        velocity_field = y.sub(0).dat.data
+    
+    
+        
+        ### Build the temperature model ###
+        
+        geothermal_flux = -geo_flux*ϕ  * ds_b
+        F_diffusion = k*inner(grad(T), grad(ϕ)) * dx
+        F_advection = - ρ * c * T * inner(u, grad(ϕ)) * dx
+     
+        F = F_advection + F_diffusion + geothermal_flux
+
+        T_mean = -31 #average temp (C)
+
+        temperature_expr = T_mean - (z - 2000)*.01
+
+        surface_temp_bc = firedrake.DirichletBC(V, temperature_expr, 'top')
+        ### Solve for the temperature field
+        firedrake.solve(F == 0, T, [surface_temp_bc])
+    
+        ### Get the new temp field we just solved for ###
+        temp_field = T.dat.data
+    
+        ### Calculate the residuals in the temp field ###
+        residual = np.sum(np.abs((prev_temp_field - temp_field)))/temp_field.shape[0]
+        print(residual)
+        if residual < 0.01: #If the residual is less than the 0.01 m/yr, let's call it good.
+            break
+    return T,y, stokes_solver
