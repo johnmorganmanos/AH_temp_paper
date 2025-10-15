@@ -300,17 +300,20 @@ def starting_stuff(mesh):
 
     return x, z, V, T, ϕ
 
-def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh):
+def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial):
     
     from ufl import Measure
     dx = ufl.Measure("dx", domain=mesh)
     
     velocity_field = y.sub(0).dat.data
     temp_field = T.dat.data
-    
+    μ_new_field = Function(V).project(μ_initial)
+
     for i in range(100):
         prev_temp_field = copy.deepcopy(temp_field)
         prev_velocity = copy.deepcopy(velocity_field)
+        prev_μ_new_field = copy.deepcopy(μ_new_field)
+
         ϵ_ = sym(grad(u))
         
         ϵ_effective = sqrt((inner(ϵ_, ϵ_)+tr(ϵ_)**2)*0.5)
@@ -337,7 +340,7 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh):
         u, p = firedrake.split(y)
         v, q = firedrake.TestFunctions(y.function_space())
         
-        τ = 2* μ_new * ε(u)#  2 * μ_new_field *  ϵ_
+        τ = 2* μ_new * ε(u)
         g = as_vector((0, 0, grav))
         f =  ρ * g
         F_momentum = (inner(τ, ε(v)) - q * div(u) - p * div(v) - inner(f, v)) * dx
@@ -391,8 +394,8 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh):
         ### Get the new temp field we just solved for ###
         temp_field = T.dat.data
     
-        ### Calculate the residuals in the temp field ###
-        residual = np.sum(np.abs((prev_temp_field - temp_field)))/temp_field.shape[0]
+
+        residual = np.sum(np.abs((prev_μ_new_field - μ_new_field)))/μ_new_field.shape[0]
         print(residual)
         if residual < 0.01: #If the residual is less than the 0.01 m/yr, let's call it good.
             break
