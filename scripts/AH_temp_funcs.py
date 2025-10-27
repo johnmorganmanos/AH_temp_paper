@@ -394,9 +394,15 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial):
         ### Get the new temp field we just solved for ###
         temp_field = T.dat.data
     
+        residual = np.sum(np.abs((prev_μ_new_field.dat.data_ro[:] - μ_new_field.dat.data_ro[:])))/μ_new_field.dat.data_ro.shape[0]
 
-        residual = np.sum(np.abs((prev_μ_new_field - μ_new_field)))/μ_new_field.shape[0]
-        print(residual)
-        if residual < 0.01: #If the residual is less than the 0.01 m/yr, let's call it good.
-            break
+        if i ==0:
+            prev_residual = residual
+        else:
+            percent_change = ((residual-prev_residual)/prev_residual)*100
+
+            if -32 < percent_change < -30: #If the residual is changing less than 1 percent, let's call it good.
+                break
+            prev_residual = residual
+
     return T,y, stokes_solver
