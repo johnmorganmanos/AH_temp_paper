@@ -383,13 +383,9 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial):
      
         F = F_advection + F_diffusion + geothermal_flux
 
-        T_mean = -31 #average temp (C)
 
-        temperature_expr = T_mean - (z - 2000)*.01
-
-        surface_temp_bc = firedrake.DirichletBC(V, temperature_expr, 'top')
         ### Solve for the temperature field
-        firedrake.solve(F == 0, T, [surface_temp_bc])
+        firedrake.solve(F == 0, T, [bcs_temp])
     
         ### Get the new temp field we just solved for ###
         temp_field = T.dat.data
@@ -404,5 +400,5 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial):
             if -32 < percent_change < -30: #If the residual is changing less than 1 percent, let's call it good.
                 break
             prev_residual = residual
-
+            print(percent_change)
     return T,y, stokes_solver
