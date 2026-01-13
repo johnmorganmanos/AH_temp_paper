@@ -300,7 +300,7 @@ def starting_stuff(mesh):
 
     return x, z, V, T, ϕ
 
-def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial):
+def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial, bc_coarse):
     
     from ufl import Measure
     dx = ufl.Measure("dx", domain=mesh)
@@ -351,9 +351,12 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial):
         face_ids = ['top', 'bottom', 1, 2, 3, 4]
         bc_stokes = []
         for id in face_ids:
-            if id == 'top': pass # Skip the top face (id 5) for now
+            if id == 'top': pass # Skip the top face for now (free flow)
+            elif id == 'bottom': 
+                bc = firedrake.DirichletBC(Y.sub(0), as_vector((0, 0, 0)), id) # No flow on the bed
+                bc_stokes.append(bc)
             else:
-                bc = firedrake.DirichletBC(Y.sub(0), as_vector((0, 0, 0)), id) # No flow on the boundary
+                bc = firedrake.DirichletBC(Y.sub(0), bc_coarse, id) # coarse mesh solution on the vertical sides
                 bc_stokes.append(bc)
 
         stokes_problem = firedrake.NonlinearVariationalProblem(F_momentum, y, bc_stokes)
@@ -396,9 +399,9 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial):
             prev_residual = residual
         else:
             percent_change = ((residual-prev_residual)/prev_residual)*100
-
-            if -32 < percent_change < -30: #If the residual is changing less than 1 percent, let's call it good.
-                break
             prev_residual = residual
             print(percent_change)
+            if i == 10:
+                break
+
     return T,y, stokes_solver

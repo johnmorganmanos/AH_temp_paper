@@ -61,8 +61,8 @@ use the flow from the coarse mesh as the boundary conditions for the fine mesh.
 Change the DEM (model) resolutions as you need below.
 """
 
-upscale_factor_coarse = 1/100
-upscale_factor_fine = 1/6
+upscale_factor_coarse = 1/200
+upscale_factor_fine = 1/10
 
 resolution_of_model = 8 * (1/upscale_factor_fine)
 resolution_of_model = str(resolution_of_model)
@@ -138,7 +138,7 @@ lats = np.array(ys)
 surf_elevs = surf_DEM.flatten()
 bed_elevs = bed_DEM.flatten()
 
-layers = 5 # number of layers in z direction of the extruded mesh
+layers = 15 # number of layers in z direction of the extruded mesh
 nx = width - 1
 ny = height - 1
 
@@ -441,8 +441,11 @@ face_ids = ['top', 'bottom', 1, 2, 3, 4]
 bc_stokes = []
 for id in face_ids:
     if id == 'top': pass # Skip the top face for now (free flow)
+    elif id == 'bottom': 
+        bc = firedrake.DirichletBC(Y.sub(0), as_vector((0, 0, 0)), id) # No flow on the bed
+        bc_stokes.append(bc)
     else:
-        bc = firedrake.DirichletBC(Y.sub(0), u_bc_func, id) # No flow on the boundaries
+        bc = firedrake.DirichletBC(Y.sub(0), u_bc_func, id) # coarse mesh solution on the vertical sides
         bc_stokes.append(bc)
 
 """
@@ -472,7 +475,7 @@ stokes_solver.solve()
 print('Saving the fine mesh flow model solution before viscosity updating...')
 from firedrake.checkpointing import DumbCheckpoint
 
-chk = DumbCheckpoint("../Saved_Models/fine_mesh_flow_"+resolution_of_model+"m_constant_viscosity", mode=FILE_CREATE)
+chk = DumbCheckpoint("../Saved_Models/fine_mesh_flow_"+resolution_of_model+"m_constant_viscosity_hi_z", mode=FILE_CREATE)
 chk.store(flow, name="fine_mesh_flow_constant")
 
 from ufl import Measure
@@ -508,7 +511,7 @@ chk = DumbCheckpoint("../Saved_Models/fine_mesh_temperature_"+resolution_of_mode
 chk.store(T, name="fine_mesh_temp")
 
 print("Updating the viscosity . . .")
-T_new,flow, stokes_solver = viscosity_updater_3d(x_fine,z_fine,ϕ,T,flow,u,V,surface_temp_bc,mesh_fine, μ)
+T_new,flow, stokes_solver = viscosity_updater_3d(x_fine,z_fine,ϕ,T,flow,u,V,surface_temp_bc,mesh_fine, μ, u_bc_func)
 
 print("Saving the flow model solution with updated viscosity ...")
 chk = DumbCheckpoint("../Saved_Models/fine_mesh_flow_"+resolution_of_model+"m_updated_viscosity", mode=FILE_CREATE)
