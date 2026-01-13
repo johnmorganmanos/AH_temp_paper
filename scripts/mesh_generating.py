@@ -48,7 +48,7 @@ from rasterio.mask import mask
 from firedrake import *
 from firedrake.__future__ import interpolate
 
-def mesh_creator(fine_bed_path, fine_surf_path, coarse_bed_path, coarse_surf_path, coarse_resamp_factor=1/200, fine_resamp_factor=1/10):
+def mesh_creator(fine_bed_path, fine_surf_path, coarse_bed_path, coarse_surf_path, coarse_resamp_factor=1/200, fine_resamp_factor=1/10, layers=15):
     
     meshes_to_output = []
 
@@ -117,7 +117,6 @@ def mesh_creator(fine_bed_path, fine_surf_path, coarse_bed_path, coarse_surf_pat
         surf_elevs = surf_DEM.flatten()
         bed_elevs = bed_DEM.flatten()
 
-        layers = 15 # number of layers in z direction of the extruded mesh
         nx = width - 1
         ny = height - 1
 
