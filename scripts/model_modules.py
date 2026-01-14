@@ -62,6 +62,20 @@ def coarse_boundary_conditions(Y):
 
     return bc_stokes
 
+def fine_boundary_conditions(Y):
+
+    face_ids = ['top', 'bottom', 1, 2, 3, 4]
+    bc_stokes = []
+    
+    for id in face_ids:
+        if id == 'top': pass # Skip the top face for now (free flow)
+        elif id == 'bottom': 
+            bc = firedrake.DirichletBC(Y.sub(0), as_vector((0, 0, 0)), id) # No flow on the bed
+            bc_stokes.append(bc)
+        else:
+            bc = firedrake.DirichletBC(Y.sub(0), u_bc_func, id) # coarse mesh solution on the vertical sides
+            bc_stokes.append(bc)
+    return bc_stokes
 
 def run_flow_model(mesh_src):
     ### Flow model parameters and momentum equation ###
