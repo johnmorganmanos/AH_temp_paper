@@ -57,8 +57,9 @@ def coarse_boundary_conditions(Y):
     for id in face_ids:
         if id == 'top': pass # Skip the top face for now (free flow)
         else:
-            bc = firedrake.DirichletBC(Y.sub(0), as_vector((0, 0, 0)), id) # No flow on the boundaries
+            bc = firedrake.DirichletBC(Y.sub(0), Constant((0,0,0)), id) # No flow on the boundaries
             bc_stokes.append(bc)
+
 
     return bc_stokes
 
