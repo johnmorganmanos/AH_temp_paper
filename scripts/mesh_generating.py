@@ -165,36 +165,36 @@ def mesh_creator(src_bed_path, src_surf_path, resamp_factor=1/200, layers=15):
         )
     )
 
-    with rasterio.Env():
+    # with rasterio.Env():
 
-        # Write an array as a raster band to a new 8-bit file. For
-        # the new file's profile, we start with the profile of the source
-        profile_bed = src_bed.profile
-        profile_surf = src_surf.profile
-        # And then change the band count to 1, set the
-        # dtype to uint8, and specify LZW compression.
-        profile_bed.update(
-            dtype=rasterio.float64,
-            count=1,
-            compress='lzw',
-            width=width,
-            height=height,
-            transform=src_bed_transform)
+    #     # Write an array as a raster band to a new 8-bit file. For
+    #     # the new file's profile, we start with the profile of the source
+    #     profile_bed = src_bed.profile
+    #     profile_surf = src_surf.profile
+    #     # And then change the band count to 1, set the
+    #     # dtype to uint8, and specify LZW compression.
+    #     profile_bed.update(
+    #         dtype=rasterio.float64,
+    #         count=1,
+    #         compress='lzw',
+    #         width=width,
+    #         height=height,
+    #         transform=src_bed_transform)
 
-        profile_surf.update(
-            dtype=rasterio.float64,
-            count=1,
-            compress='lzw',
-            width=width,
-            height=height,
-            transform=src_surf_transform)
+    #     profile_surf.update(
+    #         dtype=rasterio.float64,
+    #         count=1,
+    #         compress='lzw',
+    #         width=width,
+    #         height=height,
+    #         transform=src_surf_transform)
 
-        with rasterio.open('../Processing_notebooks/resampled_meshes/resampled_bed_dem.tif', 'w', **profile_bed) as dst:
-            dst.write(bed_DEM.astype(rasterio.float64), 1)
+    #     with rasterio.open('../Processing_notebooks/resampled_meshes/resampled_bed_dem.tif', 'w', **profile_bed) as dst:
+    #         dst.write(bed_DEM.astype(rasterio.float64), 1)
 
 
-        with rasterio.open('../Processing_notebooks/resampled_meshes/resampled_surf_dem.tif', 'w', **profile_surf) as dst:
-            dst.write(surf_DEM.astype(rasterio.float64), 1)
+    #     with rasterio.open('../Processing_notebooks/resampled_meshes/resampled_surf_dem.tif', 'w', **profile_surf) as dst:
+    #         dst.write(surf_DEM.astype(rasterio.float64), 1)
 
     # Finally build the mesh you are actually after.
     mesh_src = Mesh(new_coordinates) # Mesh(new_coordinates, tolerance=50)

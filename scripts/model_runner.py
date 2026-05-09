@@ -63,6 +63,8 @@ Change the DEM (model) resolutions as you need below.
 
 upscale_factor_coarse = 1/200
 upscale_factor_fine = 1/10
+e_param=1.97
+
 
 resolution_of_model = 8 * (1/upscale_factor_fine)
 resolution_of_model = str(resolution_of_model)
@@ -138,7 +140,7 @@ lats = np.array(ys)
 surf_elevs = surf_DEM.flatten()
 bed_elevs = bed_DEM.flatten()
 
-layers = 15 # number of layers in z direction of the extruded mesh
+layers = 5 # number of layers in z direction of the extruded mesh
 nx = width - 1
 ny = height - 1
 
@@ -251,8 +253,12 @@ stokes_solver.solve()
 print('Saving the coarse mesh flow model solution...')
 from firedrake.checkpointing import DumbCheckpoint
 
-# chk = DumbCheckpoint("../Saved_Models/coarse_mesh_flow", mode=FILE_CREATE)
-# chk.store(flow, name="coarse_mesh_flow")
+chk = DumbCheckpoint("../Saved_Models/coarse_mesh_flow_final_model", mode=FILE_CREATE)
+chk.store(flow, name="coarse_mesh_flow")
+
+import sys
+sys.exit()
+
 """
 
 Interpolate the solution onto a standard mesh from 0 - 1, so we can transfer the solution to
@@ -475,7 +481,7 @@ stokes_solver.solve()
 print('Saving the fine mesh flow model solution before viscosity updating...')
 from firedrake.checkpointing import DumbCheckpoint
 
-chk = DumbCheckpoint("../Saved_Models/fine_mesh_flow_"+resolution_of_model+"m_constant_viscosity_hi_z", mode=FILE_CREATE)
+chk = DumbCheckpoint("../Saved_Models/fine_mesh_flow_"+resolution_of_model+"m_constant_viscosity"+str(e_param), mode=FILE_CREATE)
 chk.store(flow, name="fine_mesh_flow_constant")
 
 from ufl import Measure
@@ -507,16 +513,17 @@ print('Running temperature model...')
 firedrake.solve(F == 0, T, [surface_temp_bc])
 
 print("Saving the temperature model solution ...")
-chk = DumbCheckpoint("../Saved_Models/fine_mesh_temperature_"+resolution_of_model+"m_constant_viscosity", mode=FILE_CREATE)
+chk = DumbCheckpoint("../Saved_Models/fine_mesh_temperature_"+resolution_of_model+"m_constant_viscosity"+str(e_param), mode=FILE_CREATE)
 chk.store(T, name="fine_mesh_temp")
 
 print("Updating the viscosity . . .")
-T_new,flow, stokes_solver = viscosity_updater_3d(x_fine,z_fine,ϕ,T,flow,u,V,surface_temp_bc,mesh_fine, μ, u_bc_func)
+
+T_new,flow, stokes_solver = viscosity_updater_3d(x_fine,z_fine,ϕ,T,flow,u,V,surface_temp_bc,mesh_fine, μ, u_bc_func, enhancement_factor=e_param)
 
 print("Saving the flow model solution with updated viscosity ...")
-chk = DumbCheckpoint("../Saved_Models/fine_mesh_flow_"+resolution_of_model+"m_updated_viscosity", mode=FILE_CREATE)
+chk = DumbCheckpoint("../Saved_Models/fine_mesh_flow_"+resolution_of_model+"m_updated_viscosity_e"+str(e_param), mode=FILE_CREATE)
 chk.store(flow, name="fine_mesh_flow")
 
 print("Saving the temperature model solution with updated viscosity...")
-chk = DumbCheckpoint("../Saved_Models/fine_mesh_temperature_"+resolution_of_model+"m_updated_viscosity", mode=FILE_CREATE)
+chk = DumbCheckpoint("../Saved_Models/fine_mesh_temperature_"+resolution_of_model+"m_updated_viscosity_e"+str(e_param), mode=FILE_CREATE)
 chk.store(T_new, name="fine_mesh_temp")

@@ -300,7 +300,7 @@ def starting_stuff(mesh):
 
     return x, z, V, T, ϕ
 
-def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial, bc_coarse):
+def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial, bc_coarse, enhancement_factor=1, max_it=20):
     
     from ufl import Measure
     dx = ufl.Measure("dx", domain=mesh)
@@ -309,7 +309,11 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial, bc_co
     temp_field = T.dat.data
     μ_new_field = Function(V).project(μ_initial)
 
-    for i in range(100):
+    #save the residuals and convergence parameters at each step
+    abs_residuals = []
+    rel_residuals = []
+
+    for i in tqdm.tqdm(range(100)):
         prev_temp_field = copy.deepcopy(temp_field)
         prev_velocity = copy.deepcopy(velocity_field)
         prev_μ_new_field = copy.deepcopy(μ_new_field)
@@ -321,7 +325,7 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial, bc_co
         # A_new = A*exp(-((Q + (p*act_vol))/((T+273.15)*R)))
     
         A_new = A*exp(-(Q/R*( 1/(T+273.15) - 1/263))) #Does not account for melting point depression
-        μ_new =  0.5*(A_new**(-1/n))*(ϵ_effective**((1/n)-1))
+        μ_new =  0.5*enhancement_factor*(A_new**(-1/n))*(ϵ_effective**((1/n)-1))
         
         μ_new_field = Function(V).project(μ_new)
         ϵ_effective_field = Function(V).project(ϵ_effective)
@@ -392,16 +396,30 @@ def viscosity_updater_3d(x, z, ϕ, T, y, u, V, bcs_temp, mesh, μ_initial, bc_co
     
         ### Get the new temp field we just solved for ###
         temp_field = T.dat.data
-    
+
         residual = np.sum(np.abs((prev_μ_new_field.dat.data_ro[:] - μ_new_field.dat.data_ro[:])))/μ_new_field.dat.data_ro.shape[0]
+        
+        abs_residual = residual /  μ_initial.dat.data_ro[:]
+
+
+        abs_residuals.append(abs_residual)
 
         if i ==0:
             prev_residual = residual
         else:
-            percent_change = ((residual-prev_residual)/prev_residual)*100
+            rel_residual = (residual-prev_residual)/residual
+            rel_residuals.append(rel_residual)
             prev_residual = residual
-            print(percent_change)
-            if i == 10:
+
+            # residual = average of the absolute value of the pointwise updates
+    
+
+            if i == max_it:
                 break
+
+    
+    # save residuals lists as a pkl file
+    with open("residuals_full_model.pkl", "wb") as f:
+        pkl.dump((abs_residuals, rel_residuals), f)
 
     return T,y, stokes_solver
