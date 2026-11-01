@@ -1,0 +1,25 @@
+{
+  "all_finite_archived_sites_plotted": 47,
+  "bias_observed_minus_modeled_m_yr": -0.025838223033067553,
+  "checkpoint_sha256": "a6faad176f96276c9c1500308f3a43b58ed16f7504be0ca0baf71f3cfc09d724",
+  "equation": "a_modeled = u*dh_dx + v*dh_dy - w",
+  "finite_archived_sites_outside_domain": [
+    "M09",
+    "M10",
+    "M11",
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16"
+  ],
+  "mae_m_yr": 0.046667736412271815,
+  "model": "raw saved 800 m regional parent solution",
+  "paper_retained_site_outside_domain": "M16",
+  "paper_retained_sites_plotted": 24,
+  "paper_retained_sites_total": 25,
+  "pearson_r": 0.21424321484840542,
+  "rmse_m_yr": 0.05431041979352767,
+  "spearman_rho": 0.19747718266572317,
+  "units": "m ice equivalent per year per unit horizontal area"
+}
