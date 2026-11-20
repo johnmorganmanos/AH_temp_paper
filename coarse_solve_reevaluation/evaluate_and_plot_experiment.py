@@ -1191,53 +1191,182 @@ def plot_fig_s7(out_dir: Path, run_diag: dict, title_tag: str):
     plt.close(fig)
 
 
-def plot_fig_s8_domain(out_dir: Path, u_coarse, base_surf_c, is_basin: bool, inp: Path, boreholes_df, lima_path: Path, e_scale: float, title_tag: str):
-    tf = Transformer.from_crs("EPSG:4326", "EPSG:3031", always_xy=True)
-    bx, by = tf.transform(boreholes_df["E"].to_numpy(float), boreholes_df["S"].to_numpy(float))
-
-    fig, ax = plt.subplots(figsize=(8.0, 7.2), layout="constrained")
-    with rasterio.open(lima_path) as src1:
-        rasterio_show(src1.read(), ax=ax, transform=src1.transform)
-
-    # Plot coarse domain outline + coarse surface velocity vectors
-    c_coords = np.asarray(base_surf_c.ufl_domain().coordinates.dat.data_ro[:, :2], dtype=float)
-    c_zs = np.asarray(base_surf_c.dat.data_ro, dtype=float)
-    c_vel = eval_points_safe(u_coarse, np.column_stack([c_coords[:, 0], c_coords[:, 1], c_zs - 0.2]), dim=3) * SPY * e_scale
-    ok = np.isfinite(c_vel).all(axis=1)
-    # Thin arrows slightly if dense basin mesh, and scale consistently to 95th-percentile speed
-    stride = 3 if is_basin else 1
-    spd_c = np.hypot(c_vel[ok, 0], c_vel[ok, 1])
-    p95 = float(np.percentile(spd_c, 95)) if len(spd_c) else 1.0
-    q_scale = max(p95 * 14.0, 0.5)
-    q_c = ax.quiver(
-        c_coords[ok][::stride, 0], c_coords[ok][::stride, 1],
-        c_vel[ok][::stride, 0], c_vel[ok][::stride, 1],
-        color="navy", alpha=0.8, scale=q_scale, width=0.003, label="Coarse surface velocity",
-    )
-    key_val = round(max(p95, 0.1), 1)
-    ax.quiverkey(q_c, 0.14, 0.06, key_val, f"{key_val:.1f} m/yr", labelpos="E", coordinates="axes", fontproperties={"size": 8})
+def sample_coarse_surface_grid(u_coarse, base_bed_c, base_surf_c, is_basin: bool, inp: Path, e_scale: float, grid_step_m: float = 200.0):
+    """Evaluate calibrated coarse surface horizontal velocity on a crisp regular grid inside the coarse domain."""
+    from shapely import contains_xy
+    from shapely.geometry import box as shapely_box
 
     if is_basin:
         gj = json.loads((inp / "allan_hills_rema_basin.geojson").read_text(encoding="utf-8"))
         poly = shape(gj["features"][0]["geometry"])
-        px, py = poly.exterior.xy
-        ax.plot(px, py, color="steelblue", ls="--", lw=2.4, label="Coarse Mesh Domain (REMA basin)")
-        ax.set_xlim(494000, 533000)
-        ax.set_ylim(-1377000, -1326000)
+        xmin, ymin, xmax, ymax = poly.bounds
     else:
-        ax.add_patch(Rectangle((502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48), fill=False, ec="steelblue", ls="--", lw=2.4, label="Coarse Mesh Domain (1600 m rect.)"))
+        xmin, xmax = 502369.57, 531866.83
+        ymin, ymax = -1362201.48, -1342728.25
+        poly = shapely_box(xmin, ymin, xmax, ymax)
+
+    gx = np.arange(math.floor(xmin / grid_step_m) * grid_step_m, math.ceil(xmax / grid_step_m) * grid_step_m + 1.0, grid_step_m)
+    gy = np.arange(math.floor(ymin / grid_step_m) * grid_step_m, math.ceil(ymax / grid_step_m) * grid_step_m + 1.0, grid_step_m)
+    XX, YY = np.meshgrid(gx, gy)
+
+    # Pre-filter to points inside slightly buffered domain polygon for fast evaluation
+    in_poly = contains_xy(poly.buffer(grid_step_m * 0.5), XX, YY)
+    idx_r, idx_c = np.where(in_poly)
+    pts2 = np.column_stack([XX[idx_r, idx_c], YY[idx_r, idx_c]])
+
+    zs_val = eval_scalar_2d(base_surf_c, pts2)
+    zb_val = eval_scalar_2d(base_bed_c, pts2)
+    valid2 = np.isfinite(zs_val) & np.isfinite(zb_val)
+
+    U = np.full(XX.shape, np.nan, dtype=float)
+    V = np.full(XX.shape, np.nan, dtype=float)
+    S = np.full(XX.shape, np.nan, dtype=float)
+    ZS = np.full(XX.shape, np.nan, dtype=float)
+
+    if valid2.any():
+        vr = idx_r[valid2]
+        vc = idx_c[valid2]
+        zs_ok = zs_val[valid2]
+        zb_ok = zb_val[valid2]
+        # Strictly inside top layer even where thickness hits 1 m rock-outcrop guard
+        z_eval = np.maximum(zs_ok - 0.25, 0.5 * (zb_ok + zs_ok))
+        pts3 = np.column_stack([pts2[valid2, 0], pts2[valid2, 1], z_eval])
+        vel3 = eval_points_safe(u_coarse, pts3, dim=3, chunk=2500) * SPY * e_scale
+        ok3 = np.isfinite(vel3).all(axis=1)
+        if ok3.any():
+            U[vr[ok3], vc[ok3]] = vel3[ok3, 0]
+            V[vr[ok3], vc[ok3]] = vel3[ok3, 1]
+            S[vr[ok3], vc[ok3]] = np.hypot(vel3[ok3, 0], vel3[ok3, 1])
+            ZS[vr[ok3], vc[ok3]] = zs_ok[ok3]
+
+    return {"gx": gx, "gy": gy, "U": U, "V": V, "S": S, "ZS": ZS, "is_basin": is_basin}
+
+
+def plot_fig_s8_domain(
+    out_dir: Path,
+    u_coarse,
+    base_bed_c,
+    base_surf_c,
+    is_basin: bool,
+    inp: Path,
+    boreholes_df,
+    lima_path: Path,
+    e_scale: float,
+    title_tag: str,
+    grid_save_path: Path | None = None,
+):
+    tf = Transformer.from_crs("EPSG:4326", "EPSG:3031", always_xy=True)
+    bx, by = tf.transform(boreholes_df["E"].to_numpy(float), boreholes_df["S"].to_numpy(float))
+
+    grid = sample_coarse_surface_grid(u_coarse, base_bed_c, base_surf_c, is_basin, inp, e_scale, grid_step_m=200.0)
+    if grid_save_path is not None:
+        np.savez_compressed(
+            grid_save_path,
+            gx=grid["gx"], gy=grid["gy"], U=grid["U"], V=grid["V"], S=grid["S"], ZS=grid["ZS"],
+            is_basin=np.array(is_basin), e_scale=np.array(e_scale),
+        )
+
+    gx, gy, U, V, S, ZS = grid["gx"], grid["gy"], grid["U"], grid["V"], grid["S"], grid["ZS"]
+    vmin_s, vmax_s = 0.005, 2.5
+    S_plot = np.where(np.isfinite(S), np.maximum(S, vmin_s * 0.5), np.nan)
+
+    fig, ax = plt.subplots(figsize=(8.6, 7.8), layout="constrained")
+    with rasterio.open(lima_path) as src1:
+        rasterio_show(src1.read(), ax=ax, transform=src1.transform)
+
+    # Opaque surface speed heatmap covering the entire coarse domain
+    cmap_v = plt.get_cmap("viridis").copy()
+    cmap_v.set_bad((0.0, 0.0, 0.0, 0.0))  # transparent outside coarse domain so LIMA shows around it
+    im = ax.pcolormesh(
+        gx, gy, S_plot,
+        cmap=cmap_v,
+        norm=mcolors.LogNorm(vmin=vmin_s, vmax=vmax_s),
+        shading="auto",
+        alpha=1.0,
+        zorder=2,
+    )
+
+    # Subtle surface elevation contours inside the coarse domain
+    if np.isfinite(ZS).any():
+        z_lo = int(math.floor(np.nanmin(ZS) / 100.0) * 100)
+        z_hi = int(math.ceil(np.nanmax(ZS) / 100.0) * 100)
+        levels = np.arange(z_lo, z_hi + 1, 100.0)
+        cs = ax.contour(gx, gy, ZS, levels=levels, colors="white", linewidths=0.45, alpha=0.40, zorder=3)
+        ax.clabel(cs, fmt="%d m", fontsize=6.5, inline=True, inline_spacing=4)
+
+    # Crisp white streamlines showing full-basin flow direction (masked in stagnant rock areas)
+    flow_mask = np.isfinite(S) & (S >= 0.003)
+    U_st = np.where(flow_mask, U, np.nan)
+    V_st = np.where(flow_mask, V, np.nan)
+    ax.streamplot(
+        gx, gy, U_st, V_st,
+        color=(1.0, 1.0, 1.0, 0.82),
+        linewidth=0.9,
+        density=1.15,
+        arrowsize=0.9,
+        minlength=0.08,
+        zorder=4,
+    )
+
+    halo = [pe.withStroke(linewidth=3.0, foreground="black", alpha=0.7)]
+    halo_w = [pe.withStroke(linewidth=3.2, foreground="white", alpha=0.9)]
+    legend_handles = []
+    if is_basin:
+        gj = json.loads((inp / "allan_hills_rema_basin.geojson").read_text(encoding="utf-8"))
+        poly = shape(gj["features"][0]["geometry"])
+        px, py = poly.exterior.xy
+        ax.plot(px, py, color="#00E5FF", ls="-", lw=2.0, path_effects=halo, zorder=6)
+        legend_handles.append(Line2D([0], [0], color="#00E5FF", lw=2.2, path_effects=halo, label="Coarse Domain (REMA basin)"))
+        # Show original coarse rectangle for reference
+        ax.add_patch(
+            Rectangle(
+                (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
+                fill=False, ec="white", ls=":", lw=1.4, path_effects=halo, zorder=5,
+            )
+        )
+        legend_handles.append(Line2D([0], [0], color="0.25", ls=":", lw=1.6, label="Original 1600 m rect. (ref.)"))
+        ax.set_xlim(494000, 533000)
+        ax.set_ylim(-1376500, -1326500)
+        leg_loc = "lower right"
+    else:
+        ax.add_patch(
+            Rectangle(
+                (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
+                fill=False, ec="#00E5FF", ls="-", lw=2.0, path_effects=halo, zorder=6,
+            )
+        )
+        legend_handles.append(Line2D([0], [0], color="#00E5FF", lw=2.2, path_effects=halo, label="Coarse Domain (1600 m rect.)"))
         ax.set_xlim(497500, 537500)
         ax.set_ylim(-1370000, -1335000)
+        leg_loc = "upper right"
 
-    ax.add_patch(Rectangle((506902.38, -1356284.47), 512046.01 - 506902.38, -1350629.26 - (-1356284.47), fill=False, ec="indianred", ls="--", lw=2.2, label="Fine Mesh Domain (80 m)"))
-    ax.scatter(bx, by, marker="o", s=22, c="red", ec="black", lw=0.4, zorder=8, label="Boreholes")
+    ax.add_patch(
+        Rectangle(
+            (506902.38, -1356284.47), 512046.01 - 506902.38, -1350629.26 - (-1356284.47),
+            fill=False, ec="#FF2D20", ls="--", lw=2.0, path_effects=halo_w, zorder=7,
+        )
+    )
+    legend_handles.append(Line2D([0], [0], color="#FF2D20", ls="--", lw=2.0, label="Fine Mesh Domain (80 m)"))
+    ax.scatter(bx, by, marker="o", s=30, fc="#FF2D20", ec="white", lw=0.8, zorder=9)
+    legend_handles.append(Line2D([0], [0], marker="o", ls="none", ms=6, mfc="#FF2D20", mec="black", mew=0.6, label="Boreholes"))
+    legend_handles.append(Line2D([0], [0], color="0.35", lw=1.2, label="Modeled flowlines (white)"))
+
     ax.set_aspect("equal")
     ax.set_xlabel("Easting (m, EPSG:3031)")
     ax.set_ylabel("Northing (m, EPSG:3031)")
-    ax.set_title(f"Supplementary Fig. 8: Coarse & Fine Domains ({title_tag})")
-    ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
-    fig.savefig(out_dir / "C2_FigS06.png", dpi=220)
-    fig.savefig(out_dir / "C2_FigS06.pdf")
+    ax.set_title(
+        f"Supplementary Fig. 8: Basin Ice Speed & Model Domains\n({title_tag}; calibrated E = {e_scale:.2f})",
+        fontsize=10.5,
+    )
+    ax.legend(handles=legend_handles, loc=leg_loc, fontsize=8, framealpha=0.92, facecolor="white", edgecolor="0.4")
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.78, pad=0.02, extend="both")
+    cbar.set_label(r"Modeled surface ice speed $|\mathbf{u}_s|$ (m yr$^{-1}$)")
+    cbar.set_ticks([0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5])
+    cbar.ax.set_yticklabels(["0.005", "0.01", "0.05", "0.1", "0.5", "1.0", "2.5"])
+
+    fig.savefig(out_dir / "C2_FigS06.png", dpi=240, bbox_inches="tight", pad_inches=0.08)
+    fig.savefig(out_dir / "C2_FigS06.pdf", bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
 
 
@@ -1296,9 +1425,10 @@ def main():
     parser.add_argument("--metrics-out", type=Path, required=True)
     parser.add_argument("--fixed-E", type=float, default=None, help="Optional override of E instead of GNSS calibration")
     parser.add_argument("--force", action="store_true", help="Re-evaluate even if metrics JSON already exists")
+    parser.add_argument("--only-fig-s8", action="store_true", help="Fast mode: only regenerate C2_FigS06 (full-basin velocity map) + coarse surface grid NPZ")
     args = parser.parse_args()
 
-    if not args.force and args.metrics_out.is_file():
+    if not args.force and not args.only_fig_s8 and args.metrics_out.is_file():
         print(f"=== Skipping evaluation for {args.experiment}: {args.metrics_out} already exists ===", flush=True)
         return
     if not args.legacy_baseline and not (args.exp_dir / "run_diagnostics.json").is_file():
@@ -1318,10 +1448,28 @@ def main():
     T_fine = bundle["T_fine"]
     base_bed_f = bundle["base_bed_f"]
     base_surf_f = bundle["base_surf_f"]
+    base_bed_c = bundle["base_bed_c"]
     base_surf_c = bundle["base_surf_c"]
 
     boreholes_df = pd.read_csv(args.repo_dir / "Borehole_Locations/Borehole_locations_DTS.csv")
     gps_df = pd.read_csv(args.repo_dir / "GPS_velocities/24-25_velocities-good.csv")
+    lima_path = inp / "LIMA_virtual_Mosaic_15m.tif"
+
+    if args.only_fig_s8:
+        if args.fixed_E is not None:
+            e_use = args.fixed_E
+        elif args.metrics_out.is_file():
+            e_use = float(json.loads(args.metrics_out.read_text(encoding="utf-8"))["E_used"])
+        else:
+            e_use = calibrate_enhancement_factor(u_fine, base_surf_f, gps_df)["E_opt"]
+        plot_fig_s8_domain(
+            args.fig_dir, u_coarse, base_bed_c, base_surf_c, bundle["is_basin"],
+            inp, boreholes_df, lima_path, e_use, title_tag,
+            grid_save_path=args.metrics_out.parent / f"{args.experiment}_coarse_surf_grid.npz",
+        )
+        print(f"=== Updated C2_FigS06 & coarse surface grid for {args.experiment} (E={e_use:.3f}) ===", flush=True)
+        return
+
     spaulding_df = pd.read_csv(inp / "spaulding_table_s4.csv")
     ages, d38_means, d18_means = load_geochem_and_ages(inp / "argon_and_water_iso_for_JM.xlsx", inp / "age_reconciliation.csv")
 
@@ -1404,7 +1552,11 @@ def main():
     plot_fig_s1(args.fig_dir, gnss_cal, title_tag)
     temp_diag = evaluate_and_plot_fig_s2(args.fig_dir, T_fine, T_clim, T_no_adv, base_bed_f, base_surf_f, boreholes_df, args.repo_dir, title_tag)
     plot_fig_s7(args.fig_dir, bundle["run_diag"], title_tag)
-    plot_fig_s8_domain(args.fig_dir, u_coarse, base_surf_c, bundle["is_basin"], inp, boreholes_df, lima_path, e_use, title_tag)
+    plot_fig_s8_domain(
+        args.fig_dir, u_coarse, base_bed_c, base_surf_c, bundle["is_basin"],
+        inp, boreholes_df, lima_path, e_use, title_tag,
+        grid_save_path=args.metrics_out.parent / f"{args.experiment}_coarse_surf_grid.npz",
+    )
     plot_fig_s10(args.fig_dir, smb_df, smb_stats, title_tag)
 
     # Save compact CSV exports for downstream cross-experiment comparison

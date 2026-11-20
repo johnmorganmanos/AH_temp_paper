@@ -56,7 +56,9 @@ run_one() {
   # Update incremental comparison report after each finished experiment
   python -u "$SCRIPTS/make_comparison_report.py" \
     --results-dir "$RESULTS" \
-    --cmp-fig-dir "$FIGS/comparisons"
+    --cmp-fig-dir "$FIGS/comparisons" \
+    --inputs-dir "$INPUTS" \
+    --repo-dir "$REPO"
 }
 
 run_one "baseline" "Baseline (Rect. Newtonian)"

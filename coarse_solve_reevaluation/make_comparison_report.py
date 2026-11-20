@@ -338,6 +338,130 @@ def plot_boundary_coupling_diagnostic(results_dir: Path, cmp_dir: Path, items: l
     plt.close(fig)
 
 
+def plot_coarse_basin_velocity_comparison(
+    results_dir: Path,
+    cmp_dir: Path,
+    items: list[tuple[str, str, dict]],
+    inputs_dir: Path | None,
+    repo_dir: Path | None,
+):
+    """Side-by-side opaque speed heatmap + streamlines across the entire coarse domain / REMA basin."""
+    if inputs_dir is None or repo_dir is None:
+        return
+    lima_path = inputs_dir / "LIMA_virtual_Mosaic_15m.tif"
+    basin_gj = inputs_dir / "allan_hills_rema_basin.geojson"
+    bh_csv = repo_dir / "Borehole_Locations/Borehole_locations_DTS.csv"
+    if not (lima_path.is_file() and basin_gj.is_file() and bh_csv.is_file()):
+        return
+
+    import matplotlib.patheffects as pe
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Rectangle
+    import rasterio
+    from rasterio.plot import show as rasterio_show
+    from pyproj import Transformer
+    from shapely.geometry import shape
+
+    panels = [
+        ("baseline", "A. Baseline: 1600 m Rect. Newtonian"),
+        ("rect_glen", "B. Exp 1: 1600 m Rect. Glen's Law"),
+        ("basin_glen", "C. Exp 2: REMA Basin Glen (Free-slip)"),
+    ]
+    loaded = []
+    m_map = {k: m for k, _, m in items}
+    for key, ptitle in panels:
+        gp = results_dir / f"{key}_coarse_surf_grid.npz"
+        if gp.is_file() and key in m_map:
+            loaded.append((key, ptitle, np.load(gp), m_map[key]))
+    if not loaded:
+        return
+
+    bh = pd.read_csv(bh_csv)
+    tf = Transformer.from_crs("EPSG:4326", "EPSG:3031", always_xy=True)
+    bx, by = tf.transform(bh["E"].to_numpy(float), bh["S"].to_numpy(float))
+    poly = shape(json.loads(basin_gj.read_text(encoding="utf-8"))["features"][0]["geometry"])
+    px, py = poly.exterior.xy
+
+    with rasterio.open(lima_path) as src1:
+        lima_img = src1.read()
+        lima_tf = src1.transform
+
+    vmin_s, vmax_s = 0.005, 2.5
+    cmap_v = plt.get_cmap("viridis").copy()
+    cmap_v.set_bad((0.0, 0.0, 0.0, 0.0))
+    halo = [pe.withStroke(linewidth=2.8, foreground="black", alpha=0.7)]
+    halo_w = [pe.withStroke(linewidth=3.0, foreground="white", alpha=0.9)]
+
+    fig, axes = plt.subplots(1, len(loaded), figsize=(5.5 * len(loaded), 7.2), sharex=True, sharey=True, layout="constrained")
+    if len(loaded) == 1:
+        axes = [axes]
+
+    im = None
+    for idx, (key, ptitle, g, m) in enumerate(loaded):
+        ax = axes[idx]
+        rasterio_show(lima_img, ax=ax, transform=lima_tf)
+        gx, gy, U, V, S, ZS = g["gx"], g["gy"], g["U"], g["V"], g["S"], g["ZS"]
+        is_basin = bool(g["is_basin"])
+        e_val = float(m["E_used"])
+
+        S_plot = np.where(np.isfinite(S), np.maximum(S, vmin_s * 0.5), np.nan)
+        im = ax.pcolormesh(
+            gx, gy, S_plot,
+            cmap=cmap_v,
+            norm=mcolors.LogNorm(vmin=vmin_s, vmax=vmax_s),
+            shading="auto",
+            alpha=1.0,
+            zorder=2,
+        )
+
+        # Subtle elevation contours
+        if np.isfinite(ZS).any():
+            z_lo = int(math.floor(np.nanmin(ZS) / 100.0) * 100)
+            z_hi = int(math.ceil(np.nanmax(ZS) / 100.0) * 100)
+            ax.contour(gx, gy, ZS, levels=np.arange(z_lo, z_hi + 1, 100.0), colors="white", linewidths=0.4, alpha=0.35, zorder=3)
+
+        flow_mask = np.isfinite(S) & (S >= 0.003)
+        ax.streamplot(
+            gx, gy, np.where(flow_mask, U, np.nan), np.where(flow_mask, V, np.nan),
+            color=(1.0, 1.0, 1.0, 0.80), linewidth=0.85, density=1.05, arrowsize=0.85, minlength=0.08, zorder=4,
+        )
+
+        leg_h = []
+        if is_basin:
+            ax.plot(px, py, color="#00E5FF", ls="-", lw=2.0, path_effects=halo, zorder=6)
+            ax.add_patch(Rectangle((502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48), fill=False, ec="white", ls=":", lw=1.2, path_effects=halo, zorder=5))
+            leg_h.append(Line2D([0], [0], color="#00E5FF", lw=2.2, path_effects=halo, label="REMA basin domain"))
+            leg_h.append(Line2D([0], [0], color="0.25", ls=":", lw=1.5, label="1600 m rect. (ref.)"))
+        else:
+            ax.add_patch(Rectangle((502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48), fill=False, ec="#00E5FF", ls="-", lw=2.0, path_effects=halo, zorder=6))
+            ax.plot(px, py, color="white", ls=":", lw=1.2, path_effects=halo, zorder=5)
+            leg_h.append(Line2D([0], [0], color="#00E5FF", lw=2.2, path_effects=halo, label="1600 m rect. domain"))
+            leg_h.append(Line2D([0], [0], color="0.25", ls=":", lw=1.5, label="REMA basin (ref.)"))
+
+        ax.add_patch(Rectangle((506902.38, -1356284.47), 512046.01 - 506902.38, -1350629.26 - (-1356284.47), fill=False, ec="#FF2D20", ls="--", lw=1.9, path_effects=halo_w, zorder=7))
+        ax.scatter(bx, by, marker="o", s=24, fc="#FF2D20", ec="white", lw=0.7, zorder=9)
+        leg_h.append(Line2D([0], [0], color="#FF2D20", ls="--", lw=1.9, label="80 m fine mesh"))
+        leg_h.append(Line2D([0], [0], marker="o", ls="none", ms=5.5, mfc="#FF2D20", mec="black", mew=0.5, label="Boreholes"))
+
+        ax.set_xlim(494000, 533500)
+        ax.set_ylim(-1376500, -1326500)
+        ax.set_aspect("equal")
+        ax.set_xlabel("Easting (m, EPSG:3031)")
+        if idx == 0:
+            ax.set_ylabel("Northing (m, EPSG:3031)")
+        ax.set_title(f"{ptitle}\n(calibrated E = {e_val:.2f})", fontsize=10)
+        ax.legend(handles=leg_h, loc="lower right", fontsize=7.6, framealpha=0.92, facecolor="white", edgecolor="0.4")
+
+    if im is not None:
+        cbar = fig.colorbar(im, ax=axes, shrink=0.82, pad=0.015, extend="both")
+        cbar.set_label(r"Modeled surface ice speed $|\mathbf{u}_s|$ (m yr$^{-1}$)")
+        cbar.set_ticks([0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5])
+        cbar.ax.set_yticklabels(["0.005", "0.01", "0.05", "0.1", "0.5", "1.0", "2.5"])
+
+    fig.savefig(cmp_dir / "compare_coarse_basin_velocities.png", dpi=240, bbox_inches="tight", pad_inches=0.08)
+    plt.close(fig)
+
+
 def write_markdown_summary(out_md: Path, df: pd.DataFrame, items: list[tuple[str, str, dict]]):
     lines = [
         "# Coarse-Solve Reevaluation: Quantitative vs. Qualitative Comparison",
@@ -397,6 +521,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", type=Path, required=True)
     parser.add_argument("--cmp-fig-dir", type=Path, required=True)
+    parser.add_argument("--inputs-dir", type=Path, default=None)
+    parser.add_argument("--repo-dir", type=Path, default=None)
     args = parser.parse_args()
 
     args.cmp_fig_dir.mkdir(parents=True, exist_ok=True)
@@ -409,6 +535,7 @@ def main():
     plot_speed_map_comparisons(args.results_dir, args.cmp_fig_dir, items)
     plot_summary_bars_and_regressions(args.results_dir, args.cmp_fig_dir, items)
     plot_boundary_coupling_diagnostic(args.results_dir, args.cmp_fig_dir, items)
+    plot_coarse_basin_velocity_comparison(args.results_dir, args.cmp_fig_dir, items, args.inputs_dir, args.repo_dir)
     write_markdown_summary(args.results_dir / "comparison_summary.md", df, items)
     print(f"Wrote comparison summary for {len(items)} experiments to {args.results_dir}")
 

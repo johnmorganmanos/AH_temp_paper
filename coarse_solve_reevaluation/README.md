@@ -48,6 +48,7 @@ The modern-day coarse drainage basin ([delineate_rema_basin.py](delineate_rema_b
 - Encloses the entire 80 m fine mesh (`min_dist = 1,486 m` on the western Allan Hills bedrock ridge, $4\text{–}7.5\ \mathrm{km}$ on the ice-covered sides) and all 54 regional + fine-mesh GNSS stakes.
 - Reduces median normalized cross-boundary slope flow $|\hat{\mathbf{u}}_{\mathrm{slope}} \cdot \mathbf{n}|$ from **$0.67$ ($42.0^\circ$ median crossing angle; $88\%$ of perimeter crossing flowlines)** on the original rectangle to **$0.10$ ($5.6^\circ$; $75.5\%$ tangent within $|\hat{\mathbf{u}}\cdot\mathbf{n}| \le 0.2$)** on the drainage basin (see [basin_geometry/basin_delineation_diagnostics.png](basin_geometry/basin_delineation_diagnostics.png)).
 - Meshes cleanly into 1,925 constrained Delaunay triangles (1,017 nodes, graded $800\text{–}1200\ \mathrm{m}$, extruded to 5 terrain-following layers: `429,654` `CG3/CG1` Stokes DOFs) in [basin_geometry/allan_hills_basin_2d.msh](basin_geometry/allan_hills_basin_2d.msh), using exact published BedMachine + radar DEMs inside the original coarse domain seamlessly cosine-feathered into REMA 500 m / Bedmap3 500 m outside.
+- Full-basin modeled surface speeds (opaque log-scale heatmap over LIMA) and streamlines are shown across the entire REMA drainage basin in [figures/basin_glen/C2_FigS06.png](figures/basin_glen/C2_FigS06.png) (upgraded Supplementary Fig. 8) and side-by-side against the rectangular coarse solves in [figures/comparisons/compare_coarse_basin_velocities.png](figures/comparisons/compare_coarse_basin_velocities.png).
 
 ## Numerical Finding: Thermal Sidewall Boundary Condition
 
@@ -78,6 +79,7 @@ coarse_solve_reevaluation/
 │   └── <exp>_{metrics.json, core_samples.csv, gnss_stakes.csv, spaulding_smb.csv}
 └── figures/
     ├── comparisons/
+    │   ├── compare_coarse_basin_velocities.png # Full-basin opaque surface speed heatmap & streamlines (3-panel)
     │   ├── compare_speed10m_maps.png           # 10 m speed maps & log10(exp/base) ratio maps
     │   ├── compare_metrics_overview.png        # 4-panel borehole U10, OLS, GNSS E_opt, thermal MAE
     │   └── compare_boundary_coupling_decay.png # Wall inflow, GNSS inward decay & raw U10 ratios
@@ -91,7 +93,7 @@ coarse_solve_reevaluation/
         ├── C2_FigS05.png  # SI Fig. 5 (Submerged ridge transect B-B')
         ├── FigS08.png     # SI Fig. 6 (Cul-de-sac transect C-C')
         ├── C2_FigS07.png  # SI Fig. 7 (Fine-mesh viscosity convergence)
-        ├── C2_FigS06.png  # SI Fig. 8 (Coarse & fine mesh domains + coarse surface velocity)
+        ├── C2_FigS06.png  # SI Fig. 8 (Full-basin opaque surface speed heatmap, streamlines & fine domain)
         ├── C2_FigS09.png  # SI Fig. 9 (4-height 5/10/20/50 m sensitivity)
         └── C2_FigS10.png  # SI Fig. 10 (Spaulding observed vs modeled steady-geometry SMB)
 ```
@@ -117,5 +119,5 @@ python evaluate_and_plot_experiment.py \
     --fig-dir figures/basin_glen --metrics-out results/basin_glen_metrics.json
 
 # 4. Aggregate all experiments and generate cross-experiment comparison figures
-python make_comparison_report.py --results-dir results --cmp-fig-dir figures/comparisons
+python make_comparison_report.py --results-dir results --cmp-fig-dir figures/comparisons --inputs-dir <INPUTS_DIR> --repo-dir ..
 ```
