@@ -1,0 +1,9 @@
+# Keep large binary checkpoints, DEMs, intermediate grids, and duplicate figure PDFs out of git
+*.h5
+*.tif
+*.tiff
+*.npz
+*.tar.gz
+figures/*/*.pdf
+__pycache__/
+*.pyc

@@ -1,0 +1,86 @@
+{
+  "sigma_km": 1.5,
+  "basin_area_km2": 591.6098532438663,
+  "old_rect_area_km2": 574.40701253442,
+  "basin_perimeter_km": 119.50201672329943,
+  "basin_contains_fine_domain": true,
+  "min_dist_fine_to_basin_boundary_m": 1486.2750320206142,
+  "gmsh_2d_nodes": 1017,
+  "gmsh_2d_triangles": 1925,
+  "gnss_sites_inside_basin": 54,
+  "gnss_sites_total": 54,
+  "spaulding_all_finite_inside_basin": 25,
+  "spaulding_all_finite_total": 55,
+  "spaulding_ice_firn_inside_basin": 15,
+  "spaulding_ice_firn_total": 25,
+  "basin_boundary_flow_alignment": {
+    "perimeter_km": 119.50201672329943,
+    "mean_u_dot_n": -0.022502610223149845,
+    "mean_abs_u_dot_n": 0.17180449538567402,
+    "weighted_median_abs_u_dot_n": 0.09689420953791522,
+    "median_crossing_angle_deg": 5.560353073427036,
+    "frac_outflow_gt_0p2": 0.11363897260424086,
+    "frac_inflow_lt_m0p2": 0.13136696542721138,
+    "frac_tangent_within_0p2": 0.7549940619685477
+  },
+  "old_rect_boundary_flow_alignment": {
+    "perimeter_km": 97.94098785425152,
+    "mean_u_dot_n": 0.049671280687828716,
+    "mean_abs_u_dot_n": 0.6019376814425922,
+    "weighted_median_abs_u_dot_n": 0.6693987296062026,
+    "median_crossing_angle_deg": 42.02067541399194,
+    "frac_outflow_gt_0p2": 0.47470654063192014,
+    "frac_inflow_lt_m0p2": 0.4054108431153119,
+    "frac_tangent_within_0p2": 0.11988261625276804
+  },
+  "gnss_slope_smoothing_scan": [
+    {
+      "sigma_km": 0.5,
+      "all_54_median_deg": 10.857623112037846,
+      "all_54_mean_deg": 17.080374453231702,
+      "regional_36_median_deg": 16.29359555713795,
+      "regional_36_mean_deg": 15.90720776014347,
+      "fine_18_median_deg": 5.059439594637812
+    },
+    {
+      "sigma_km": 1.0,
+      "all_54_median_deg": 13.45599609200457,
+      "all_54_mean_deg": 21.67224193065975,
+      "regional_36_median_deg": 9.367913783591185,
+      "regional_36_mean_deg": 13.726468564525108,
+      "fine_18_median_deg": 16.81566120228252
+    },
+    {
+      "sigma_km": 1.5,
+      "all_54_median_deg": 14.218206653656464,
+      "all_54_mean_deg": 24.006895237628484,
+      "regional_36_median_deg": 9.85781027344387,
+      "regional_36_mean_deg": 13.043953550685613,
+      "fine_18_median_deg": 22.947814430252585
+    },
+    {
+      "sigma_km": 2.0,
+      "all_54_median_deg": 16.119144271280643,
+      "all_54_mean_deg": 25.85407495307335,
+      "regional_36_median_deg": 13.02059792418689,
+      "regional_36_mean_deg": 13.623025434152412,
+      "fine_18_median_deg": 30.512090117189338
+    },
+    {
+      "sigma_km": 2.5,
+      "all_54_median_deg": 19.135440953948684,
+      "all_54_mean_deg": 27.232593645595152,
+      "regional_36_median_deg": 12.573188188135545,
+      "regional_36_mean_deg": 14.569829159141499,
+      "fine_18_median_deg": 36.640730472484826
+    },
+    {
+      "sigma_km": 3.0,
+      "all_54_median_deg": 18.989701226102248,
+      "all_54_mean_deg": 27.652219161038836,
+      "regional_36_median_deg": 14.258171741854454,
+      "regional_36_mean_deg": 15.119531226799657,
+      "fine_18_median_deg": 38.960064363839926
+    }
+  ]
+}
