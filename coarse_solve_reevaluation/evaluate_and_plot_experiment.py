@@ -1192,7 +1192,7 @@ def plot_fig_s7(out_dir: Path, run_diag: dict, title_tag: str):
 
 
 def sample_coarse_surface_grid(u_coarse, base_bed_c, base_surf_c, is_basin: bool, inp: Path, e_scale: float, grid_step_m: float = 200.0):
-    """Evaluate calibrated coarse surface horizontal velocity on a crisp regular grid inside the coarse domain."""
+    """Evaluate calibrated coarse surface velocity, surface slope, and ice thickness on a regular grid."""
     from shapely import contains_xy
     from shapely.geometry import box as shapely_box
 
@@ -1209,25 +1209,32 @@ def sample_coarse_surface_grid(u_coarse, base_bed_c, base_surf_c, is_basin: bool
     gy = np.arange(math.floor(ymin / grid_step_m) * grid_step_m, math.ceil(ymax / grid_step_m) * grid_step_m + 1.0, grid_step_m)
     XX, YY = np.meshgrid(gx, gy)
 
-    # Pre-filter to points inside slightly buffered domain polygon for fast evaluation
+    # Project surface gradient onto CG1 on the coarse 2D mesh for smooth boundary-complete slopes
+    V_grad = VectorFunctionSpace(base_surf_c.ufl_domain(), "CG", 1)
+    grad_s_fn = fd.project(grad(base_surf_c), V_grad)
+
     in_poly = contains_xy(poly.buffer(grid_step_m * 0.5), XX, YY)
     idx_r, idx_c = np.where(in_poly)
     pts2 = np.column_stack([XX[idx_r, idx_c], YY[idx_r, idx_c]])
 
     zs_val = eval_scalar_2d(base_surf_c, pts2)
     zb_val = eval_scalar_2d(base_bed_c, pts2)
-    valid2 = np.isfinite(zs_val) & np.isfinite(zb_val)
+    gs_val = eval_points_safe(grad_s_fn, pts2, dim=2, chunk=2500)
+    valid2 = np.isfinite(zs_val) & np.isfinite(zb_val) & np.isfinite(gs_val).all(axis=1)
 
     U = np.full(XX.shape, np.nan, dtype=float)
     V = np.full(XX.shape, np.nan, dtype=float)
     S = np.full(XX.shape, np.nan, dtype=float)
     ZS = np.full(XX.shape, np.nan, dtype=float)
+    H = np.full(XX.shape, np.nan, dtype=float)
+    SLOPE = np.full(XX.shape, np.nan, dtype=float)
 
     if valid2.any():
         vr = idx_r[valid2]
         vc = idx_c[valid2]
         zs_ok = zs_val[valid2]
         zb_ok = zb_val[valid2]
+        slp_ok = np.hypot(gs_val[valid2, 0], gs_val[valid2, 1])
         # Strictly inside top layer even where thickness hits 1 m rock-outcrop guard
         z_eval = np.maximum(zs_ok - 0.25, 0.5 * (zb_ok + zs_ok))
         pts3 = np.column_stack([pts2[valid2, 0], pts2[valid2, 1], z_eval])
@@ -1238,8 +1245,10 @@ def sample_coarse_surface_grid(u_coarse, base_bed_c, base_surf_c, is_basin: bool
             V[vr[ok3], vc[ok3]] = vel3[ok3, 1]
             S[vr[ok3], vc[ok3]] = np.hypot(vel3[ok3, 0], vel3[ok3, 1])
             ZS[vr[ok3], vc[ok3]] = zs_ok[ok3]
+            H[vr[ok3], vc[ok3]] = np.maximum(zs_ok[ok3] - zb_ok[ok3], 0.0)
+            SLOPE[vr[ok3], vc[ok3]] = slp_ok[ok3]
 
-    return {"gx": gx, "gy": gy, "U": U, "V": V, "S": S, "ZS": ZS, "is_basin": is_basin}
+    return {"gx": gx, "gy": gy, "U": U, "V": V, "S": S, "ZS": ZS, "H": H, "SLOPE": SLOPE, "is_basin": is_basin}
 
 
 def plot_fig_s8_domain(
@@ -1255,6 +1264,7 @@ def plot_fig_s8_domain(
     title_tag: str,
     grid_save_path: Path | None = None,
 ):
+    """3-panel Supplementary Fig. 8: (A) Ice velocity vectors over LIMA, (B) Surface slope, (C) Ice thickness."""
     tf = Transformer.from_crs("EPSG:4326", "EPSG:3031", always_xy=True)
     bx, by = tf.transform(boreholes_df["E"].to_numpy(float), boreholes_df["S"].to_numpy(float))
 
@@ -1262,109 +1272,159 @@ def plot_fig_s8_domain(
     if grid_save_path is not None:
         np.savez_compressed(
             grid_save_path,
-            gx=grid["gx"], gy=grid["gy"], U=grid["U"], V=grid["V"], S=grid["S"], ZS=grid["ZS"],
+            gx=grid["gx"], gy=grid["gy"], U=grid["U"], V=grid["V"], S=grid["S"],
+            ZS=grid["ZS"], H=grid["H"], SLOPE=grid["SLOPE"],
             is_basin=np.array(is_basin), e_scale=np.array(e_scale),
         )
 
-    gx, gy, U, V, S, ZS = grid["gx"], grid["gy"], grid["U"], grid["V"], grid["S"], grid["ZS"]
-    vmin_s, vmax_s = 0.005, 2.5
-    S_plot = np.where(np.isfinite(S), np.maximum(S, vmin_s * 0.5), np.nan)
-
-    fig, ax = plt.subplots(figsize=(8.6, 7.8), layout="constrained")
+    gx, gy, U, V, S, ZS, H, SLOPE = (
+        grid["gx"], grid["gy"], grid["U"], grid["V"], grid["S"], grid["ZS"], grid["H"], grid["SLOPE"]
+    )
     with rasterio.open(lima_path) as src1:
-        rasterio_show(src1.read(), ax=ax, transform=src1.transform)
+        lima_img = src1.read()
+        lima_tf = src1.transform
 
-    # Opaque surface speed heatmap covering the entire coarse domain
-    cmap_v = plt.get_cmap("viridis").copy()
-    cmap_v.set_bad((0.0, 0.0, 0.0, 0.0))  # transparent outside coarse domain so LIMA shows around it
-    im = ax.pcolormesh(
-        gx, gy, S_plot,
-        cmap=cmap_v,
-        norm=mcolors.LogNorm(vmin=vmin_s, vmax=vmax_s),
-        shading="auto",
-        alpha=1.0,
-        zorder=2,
-    )
-
-    # Subtle surface elevation contours inside the coarse domain
-    if np.isfinite(ZS).any():
-        z_lo = int(math.floor(np.nanmin(ZS) / 100.0) * 100)
-        z_hi = int(math.ceil(np.nanmax(ZS) / 100.0) * 100)
-        levels = np.arange(z_lo, z_hi + 1, 100.0)
-        cs = ax.contour(gx, gy, ZS, levels=levels, colors="white", linewidths=0.45, alpha=0.40, zorder=3)
-        ax.clabel(cs, fmt="%d m", fontsize=6.5, inline=True, inline_spacing=4)
-
-    # Crisp white streamlines showing full-basin flow direction (masked in stagnant rock areas)
-    flow_mask = np.isfinite(S) & (S >= 0.003)
-    U_st = np.where(flow_mask, U, np.nan)
-    V_st = np.where(flow_mask, V, np.nan)
-    ax.streamplot(
-        gx, gy, U_st, V_st,
-        color=(1.0, 1.0, 1.0, 0.82),
-        linewidth=0.9,
-        density=1.15,
-        arrowsize=0.9,
-        minlength=0.08,
-        zorder=4,
-    )
-
-    halo = [pe.withStroke(linewidth=3.0, foreground="black", alpha=0.7)]
-    halo_w = [pe.withStroke(linewidth=3.2, foreground="white", alpha=0.9)]
-    legend_handles = []
+    poly = None
+    px = py = None
     if is_basin:
         gj = json.loads((inp / "allan_hills_rema_basin.geojson").read_text(encoding="utf-8"))
         poly = shape(gj["features"][0]["geometry"])
         px, py = poly.exterior.xy
-        ax.plot(px, py, color="#00E5FF", ls="-", lw=2.0, path_effects=halo, zorder=6)
-        legend_handles.append(Line2D([0], [0], color="#00E5FF", lw=2.2, path_effects=halo, label="Coarse Domain (REMA basin)"))
-        # Show original coarse rectangle for reference
-        ax.add_patch(
-            Rectangle(
-                (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
-                fill=False, ec="white", ls=":", lw=1.4, path_effects=halo, zorder=5,
-            )
-        )
-        legend_handles.append(Line2D([0], [0], color="0.25", ls=":", lw=1.6, label="Original 1600 m rect. (ref.)"))
-        ax.set_xlim(494000, 533000)
-        ax.set_ylim(-1376500, -1326500)
+        xlim = (494000, 533000)
+        ylim = (-1376500, -1326500)
         leg_loc = "lower right"
+        qk_xy = (0.16, 0.05)
     else:
+        xlim = (497500, 537500)
+        ylim = (-1370000, -1335000)
+        leg_loc = "upper right"
+        qk_xy = (0.16, 0.06)
+
+    fig_h = 6.8 if is_basin else 5.4
+    cb_shrink = 0.78 if is_basin else 0.76
+    fig, axes = plt.subplots(1, 3, figsize=(17.5, fig_h), sharex=True, sharey=True, layout="constrained")
+    halo_k = [pe.withStroke(linewidth=2.6, foreground="black", alpha=0.65)]
+    halo_w = [pe.withStroke(linewidth=2.8, foreground="white", alpha=0.9)]
+
+    def draw_domain_overlays(ax, add_legend: bool = False):
+        leg_h = []
+        if is_basin:
+            ax.plot(px, py, color="steelblue", ls="-", lw=2.0, path_effects=halo_w, zorder=6)
+            ax.add_patch(
+                Rectangle(
+                    (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
+                    fill=False, ec="0.25", ls=":", lw=1.3, path_effects=halo_w, zorder=5,
+                )
+            )
+            leg_h.append(Line2D([0], [0], color="steelblue", lw=2.0, label="REMA basin domain"))
+            leg_h.append(Line2D([0], [0], color="0.25", ls=":", lw=1.4, label="Original 1600 m rect."))
+        else:
+            ax.add_patch(
+                Rectangle(
+                    (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
+                    fill=False, ec="steelblue", ls="-", lw=2.0, path_effects=halo_w, zorder=6,
+                )
+            )
+            leg_h.append(Line2D([0], [0], color="steelblue", lw=2.0, label="Coarse domain (1600 m)"))
+
         ax.add_patch(
             Rectangle(
-                (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
-                fill=False, ec="#00E5FF", ls="-", lw=2.0, path_effects=halo, zorder=6,
+                (506902.38, -1356284.47), 512046.01 - 506902.38, -1350629.26 - (-1356284.47),
+                fill=False, ec="#D62728", ls="--", lw=1.9, path_effects=halo_w, zorder=7,
             )
         )
-        legend_handles.append(Line2D([0], [0], color="#00E5FF", lw=2.2, path_effects=halo, label="Coarse Domain (1600 m rect.)"))
-        ax.set_xlim(497500, 537500)
-        ax.set_ylim(-1370000, -1335000)
-        leg_loc = "upper right"
+        ax.scatter(bx, by, marker="o", s=26, fc="#D62728", ec="white", lw=0.7, zorder=9)
+        leg_h.append(Line2D([0], [0], color="#D62728", ls="--", lw=1.9, label="Fine mesh (80 m)"))
+        leg_h.append(Line2D([0], [0], marker="o", ls="none", ms=5.5, mfc="#D62728", mec="black", mew=0.5, label="Boreholes"))
+        if add_legend:
+            ax.legend(handles=leg_h, loc=leg_loc, fontsize=7.8, framealpha=0.92, facecolor="white", edgecolor="0.4")
 
-    ax.add_patch(
+    # --- Panel A: Surface ice velocity vectors over unobstructed LIMA imagery ---
+    ax0 = axes[0]
+    rasterio_show(lima_img, ax=ax0, transform=lima_tf)
+    # Sample uniform 1600 m vector grid (every 8th cell of 200 m grid) so spacing is clean & even everywhere
+    step_q = 8
+    XX_q, YY_q = np.meshgrid(gx[::step_q], gy[::step_q])
+    U_q = U[::step_q, ::step_q]
+    V_q = V[::step_q, ::step_q]
+    S_q = S[::step_q, ::step_q]
+    ok_q = np.isfinite(U_q) & np.isfinite(V_q)
+    p95 = float(np.percentile(S_q[ok_q], 95)) if ok_q.any() else 1.0
+    q_scale = max(p95 * 11.5, 0.5)
+    q_c = ax0.quiver(
+        XX_q[ok_q], YY_q[ok_q], U_q[ok_q], V_q[ok_q],
+        color="navy", alpha=0.88, scale=q_scale, width=0.0042,
+        headwidth=3.8, headlength=4.5, zorder=5,
+    )
+    key_val = round(max(p95, 0.1), 1)
+    # Crisp white backdrop box for quiverkey so it's readable over LIMA
+    qk_box_x = xlim[0] + 0.03 * (xlim[1] - xlim[0])
+    qk_box_y = ylim[0] + 0.02 * (ylim[1] - ylim[0])
+    ax0.add_patch(
         Rectangle(
-            (506902.38, -1356284.47), 512046.01 - 506902.38, -1350629.26 - (-1356284.47),
-            fill=False, ec="#FF2D20", ls="--", lw=2.0, path_effects=halo_w, zorder=7,
+            (qk_box_x, qk_box_y), 0.30 * (xlim[1] - xlim[0]), 0.065 * (ylim[1] - ylim[0]),
+            fc="white", ec="0.4", lw=0.7, alpha=0.92, zorder=8,
         )
     )
-    legend_handles.append(Line2D([0], [0], color="#FF2D20", ls="--", lw=2.0, label="Fine Mesh Domain (80 m)"))
-    ax.scatter(bx, by, marker="o", s=30, fc="#FF2D20", ec="white", lw=0.8, zorder=9)
-    legend_handles.append(Line2D([0], [0], marker="o", ls="none", ms=6, mfc="#FF2D20", mec="black", mew=0.6, label="Boreholes"))
-    legend_handles.append(Line2D([0], [0], color="0.35", lw=1.2, label="Modeled flowlines (white)"))
+    qk = ax0.quiverkey(q_c, qk_xy[0], qk_xy[1], key_val, f"{key_val:.1f} m yr$^{{-1}}$", labelpos="E", coordinates="axes", fontproperties={"size": 8.2})
+    qk.set_zorder(10)
+    draw_domain_overlays(ax0, add_legend=True)
+    ax0.set_title(f"A. Modeled Surface Velocity (E = {e_scale:.2f})", fontsize=10.5)
 
-    ax.set_aspect("equal")
-    ax.set_xlabel("Easting (m, EPSG:3031)")
-    ax.set_ylabel("Northing (m, EPSG:3031)")
-    ax.set_title(
-        f"Supplementary Fig. 8: Basin Ice Speed & Model Domains\n({title_tag}; calibrated E = {e_scale:.2f})",
-        fontsize=10.5,
+    # --- Panel B: Ice surface slope |grad s| ---
+    ax1 = axes[1]
+    rasterio_show(lima_img, ax=ax1, transform=lima_tf)
+    cmap_slp = plt.get_cmap("YlOrRd").copy()
+    cmap_slp.set_bad((0.0, 0.0, 0.0, 0.0))
+    slp_plot = np.where(np.isfinite(SLOPE), np.maximum(SLOPE, 0.001), np.nan)
+    im_s = ax1.pcolormesh(
+        gx, gy, slp_plot,
+        cmap=cmap_slp,
+        norm=mcolors.LogNorm(vmin=0.002, vmax=0.10),
+        shading="auto",
+        alpha=1.0,
+        zorder=2,
     )
-    ax.legend(handles=legend_handles, loc=leg_loc, fontsize=8, framealpha=0.92, facecolor="white", edgecolor="0.4")
+    if np.isfinite(ZS).any():
+        z_lo = int(math.floor(np.nanmin(ZS) / 100.0) * 100)
+        z_hi = int(math.ceil(np.nanmax(ZS) / 100.0) * 100)
+        cs = ax1.contour(gx, gy, ZS, levels=np.arange(z_lo, z_hi + 1, 100.0), colors="0.2", linewidths=0.45, alpha=0.55, zorder=3)
+        ax1.clabel(cs, fmt="%d m", fontsize=6.5, inline=True, inline_spacing=4)
+    draw_domain_overlays(ax1, add_legend=False)
+    ax1.set_title("B. Ice Surface Slope |∇s| & Elevation", fontsize=10.5)
+    cb_s = fig.colorbar(im_s, ax=ax1, shrink=cb_shrink, pad=0.02, extend="both")
+    cb_s.set_label(r"Surface slope $|\nabla_h s|$ (m m$^{-1}$)")
+    cb_s.set_ticks([0.002, 0.005, 0.01, 0.02, 0.05, 0.10])
+    cb_s.ax.set_yticklabels(["0.002", "0.005", "0.01", "0.02", "0.05", "0.10"])
 
-    cbar = fig.colorbar(im, ax=ax, shrink=0.78, pad=0.02, extend="both")
-    cbar.set_label(r"Modeled surface ice speed $|\mathbf{u}_s|$ (m yr$^{-1}$)")
-    cbar.set_ticks([0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5])
-    cbar.ax.set_yticklabels(["0.005", "0.01", "0.05", "0.1", "0.5", "1.0", "2.5"])
+    # --- Panel C: Ice thickness H = s - b ---
+    ax2 = axes[2]
+    rasterio_show(lima_img, ax=ax2, transform=lima_tf)
+    cmap_h = plt.get_cmap("viridis").copy()
+    cmap_h.set_bad((0.0, 0.0, 0.0, 0.0))
+    im_h = ax2.pcolormesh(
+        gx, gy, H,
+        cmap=cmap_h,
+        vmin=0.0,
+        vmax=1050.0,
+        shading="auto",
+        alpha=1.0,
+        zorder=2,
+    )
+    draw_domain_overlays(ax2, add_legend=False)
+    ax2.set_title("C. Ice Thickness H", fontsize=10.5)
+    cb_h = fig.colorbar(im_h, ax=ax2, shrink=cb_shrink, pad=0.02, extend="max")
+    cb_h.set_label("Ice thickness H (m)")
 
+    for i_ax, ax in enumerate(axes):
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
+        ax.set_aspect("equal")
+        ax.set_xlabel("Easting (m, EPSG:3031)")
+        if i_ax == 0:
+            ax.set_ylabel("Northing (m, EPSG:3031)")
+
+    fig.suptitle(f"Supplementary Fig. 8: Coarse Domain Flow, Surface Slope & Ice Thickness ({title_tag})", fontsize=12)
     fig.savefig(out_dir / "C2_FigS06.png", dpi=240, bbox_inches="tight", pad_inches=0.08)
     fig.savefig(out_dir / "C2_FigS06.pdf", bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)

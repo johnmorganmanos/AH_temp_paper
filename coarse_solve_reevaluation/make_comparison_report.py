@@ -345,7 +345,7 @@ def plot_coarse_basin_velocity_comparison(
     inputs_dir: Path | None,
     repo_dir: Path | None,
 ):
-    """Side-by-side opaque speed heatmap + streamlines across the entire coarse domain / REMA basin."""
+    """Side-by-side coarse surface velocity vectors over LIMA (no heatmap) comparing rect vs REMA basin."""
     if inputs_dir is None or repo_dir is None:
         return
     lima_path = inputs_dir / "LIMA_virtual_Mosaic_15m.tif"
@@ -386,77 +386,70 @@ def plot_coarse_basin_velocity_comparison(
         lima_img = src1.read()
         lima_tf = src1.transform
 
-    vmin_s, vmax_s = 0.005, 2.5
-    cmap_v = plt.get_cmap("viridis").copy()
-    cmap_v.set_bad((0.0, 0.0, 0.0, 0.0))
-    halo = [pe.withStroke(linewidth=2.8, foreground="black", alpha=0.7)]
-    halo_w = [pe.withStroke(linewidth=3.0, foreground="white", alpha=0.9)]
-
-    fig, axes = plt.subplots(1, len(loaded), figsize=(5.5 * len(loaded), 7.2), sharex=True, sharey=True, layout="constrained")
+    halo_w = [pe.withStroke(linewidth=2.8, foreground="white", alpha=0.9)]
+    fig, axes = plt.subplots(1, len(loaded), figsize=(5.5 * len(loaded), 7.0), sharex=True, sharey=True, layout="constrained")
     if len(loaded) == 1:
         axes = [axes]
 
-    im = None
+    xlim = (494000, 533500)
+    ylim = (-1376500, -1326500)
+    step_q = 8  # uniform 1600 m vector spacing on the 200 m evaluation grid
+
     for idx, (key, ptitle, g, m) in enumerate(loaded):
         ax = axes[idx]
         rasterio_show(lima_img, ax=ax, transform=lima_tf)
-        gx, gy, U, V, S, ZS = g["gx"], g["gy"], g["U"], g["V"], g["S"], g["ZS"]
+        gx, gy, U, V, S = g["gx"], g["gy"], g["U"], g["V"], g["S"]
         is_basin = bool(g["is_basin"])
         e_val = float(m["E_used"])
 
-        S_plot = np.where(np.isfinite(S), np.maximum(S, vmin_s * 0.5), np.nan)
-        im = ax.pcolormesh(
-            gx, gy, S_plot,
-            cmap=cmap_v,
-            norm=mcolors.LogNorm(vmin=vmin_s, vmax=vmax_s),
-            shading="auto",
-            alpha=1.0,
-            zorder=2,
+        XX_q, YY_q = np.meshgrid(gx[::step_q], gy[::step_q])
+        U_q = U[::step_q, ::step_q]
+        V_q = V[::step_q, ::step_q]
+        S_q = S[::step_q, ::step_q]
+        ok_q = np.isfinite(U_q) & np.isfinite(V_q)
+        p95 = float(np.percentile(S_q[ok_q], 95)) if ok_q.any() else 1.0
+        q_scale = max(p95 * 11.5, 0.5)
+        q_c = ax.quiver(
+            XX_q[ok_q], YY_q[ok_q], U_q[ok_q], V_q[ok_q],
+            color="navy", alpha=0.88, scale=q_scale, width=0.0042,
+            headwidth=3.8, headlength=4.5, zorder=5,
         )
-
-        # Subtle elevation contours
-        if np.isfinite(ZS).any():
-            z_lo = int(math.floor(np.nanmin(ZS) / 100.0) * 100)
-            z_hi = int(math.ceil(np.nanmax(ZS) / 100.0) * 100)
-            ax.contour(gx, gy, ZS, levels=np.arange(z_lo, z_hi + 1, 100.0), colors="white", linewidths=0.4, alpha=0.35, zorder=3)
-
-        flow_mask = np.isfinite(S) & (S >= 0.003)
-        ax.streamplot(
-            gx, gy, np.where(flow_mask, U, np.nan), np.where(flow_mask, V, np.nan),
-            color=(1.0, 1.0, 1.0, 0.80), linewidth=0.85, density=1.05, arrowsize=0.85, minlength=0.08, zorder=4,
+        key_val = round(max(p95, 0.1), 1)
+        ax.add_patch(
+            Rectangle(
+                (xlim[0] + 0.03 * (xlim[1] - xlim[0]), ylim[0] + 0.02 * (ylim[1] - ylim[0])),
+                0.32 * (xlim[1] - xlim[0]), 0.065 * (ylim[1] - ylim[0]),
+                fc="white", ec="0.4", lw=0.7, alpha=0.92, zorder=8,
+            )
         )
+        qk = ax.quiverkey(q_c, 0.16, 0.052, key_val, f"{key_val:.1f} m yr$^{{-1}}$", labelpos="E", coordinates="axes", fontproperties={"size": 8.0})
+        qk.set_zorder(10)
 
         leg_h = []
         if is_basin:
-            ax.plot(px, py, color="#00E5FF", ls="-", lw=2.0, path_effects=halo, zorder=6)
-            ax.add_patch(Rectangle((502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48), fill=False, ec="white", ls=":", lw=1.2, path_effects=halo, zorder=5))
-            leg_h.append(Line2D([0], [0], color="#00E5FF", lw=2.2, path_effects=halo, label="REMA basin domain"))
-            leg_h.append(Line2D([0], [0], color="0.25", ls=":", lw=1.5, label="1600 m rect. (ref.)"))
+            ax.plot(px, py, color="steelblue", ls="-", lw=2.0, path_effects=halo_w, zorder=6)
+            ax.add_patch(Rectangle((502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48), fill=False, ec="0.25", ls=":", lw=1.3, path_effects=halo_w, zorder=5))
+            leg_h.append(Line2D([0], [0], color="steelblue", lw=2.0, label="REMA basin domain"))
+            leg_h.append(Line2D([0], [0], color="0.25", ls=":", lw=1.4, label="1600 m rect. (ref.)"))
         else:
-            ax.add_patch(Rectangle((502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48), fill=False, ec="#00E5FF", ls="-", lw=2.0, path_effects=halo, zorder=6))
-            ax.plot(px, py, color="white", ls=":", lw=1.2, path_effects=halo, zorder=5)
-            leg_h.append(Line2D([0], [0], color="#00E5FF", lw=2.2, path_effects=halo, label="1600 m rect. domain"))
-            leg_h.append(Line2D([0], [0], color="0.25", ls=":", lw=1.5, label="REMA basin (ref.)"))
+            ax.add_patch(Rectangle((502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48), fill=False, ec="steelblue", ls="-", lw=2.0, path_effects=halo_w, zorder=6))
+            ax.plot(px, py, color="0.25", ls=":", lw=1.3, path_effects=halo_w, zorder=5)
+            leg_h.append(Line2D([0], [0], color="steelblue", lw=2.0, label="1600 m rect. domain"))
+            leg_h.append(Line2D([0], [0], color="0.25", ls=":", lw=1.4, label="REMA basin (ref.)"))
 
-        ax.add_patch(Rectangle((506902.38, -1356284.47), 512046.01 - 506902.38, -1350629.26 - (-1356284.47), fill=False, ec="#FF2D20", ls="--", lw=1.9, path_effects=halo_w, zorder=7))
-        ax.scatter(bx, by, marker="o", s=24, fc="#FF2D20", ec="white", lw=0.7, zorder=9)
-        leg_h.append(Line2D([0], [0], color="#FF2D20", ls="--", lw=1.9, label="80 m fine mesh"))
-        leg_h.append(Line2D([0], [0], marker="o", ls="none", ms=5.5, mfc="#FF2D20", mec="black", mew=0.5, label="Boreholes"))
+        ax.add_patch(Rectangle((506902.38, -1356284.47), 512046.01 - 506902.38, -1350629.26 - (-1356284.47), fill=False, ec="#D62728", ls="--", lw=1.9, path_effects=halo_w, zorder=7))
+        ax.scatter(bx, by, marker="o", s=24, fc="#D62728", ec="white", lw=0.7, zorder=9)
+        leg_h.append(Line2D([0], [0], color="#D62728", ls="--", lw=1.9, label="80 m fine mesh"))
+        leg_h.append(Line2D([0], [0], marker="o", ls="none", ms=5.5, mfc="#D62728", mec="black", mew=0.5, label="Boreholes"))
 
-        ax.set_xlim(494000, 533500)
-        ax.set_ylim(-1376500, -1326500)
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
         ax.set_aspect("equal")
         ax.set_xlabel("Easting (m, EPSG:3031)")
         if idx == 0:
             ax.set_ylabel("Northing (m, EPSG:3031)")
         ax.set_title(f"{ptitle}\n(calibrated E = {e_val:.2f})", fontsize=10)
         ax.legend(handles=leg_h, loc="lower right", fontsize=7.6, framealpha=0.92, facecolor="white", edgecolor="0.4")
-
-    if im is not None:
-        cbar = fig.colorbar(im, ax=axes, shrink=0.82, pad=0.015, extend="both")
-        cbar.set_label(r"Modeled surface ice speed $|\mathbf{u}_s|$ (m yr$^{-1}$)")
-        cbar.set_ticks([0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5])
-        cbar.ax.set_yticklabels(["0.005", "0.01", "0.05", "0.1", "0.5", "1.0", "2.5"])
 
     fig.savefig(cmp_dir / "compare_coarse_basin_velocities.png", dpi=240, bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
