@@ -1251,6 +1251,196 @@ def sample_coarse_surface_grid(u_coarse, base_bed_c, base_surf_c, is_basin: bool
     return {"gx": gx, "gy": gy, "U": U, "V": V, "S": S, "ZS": ZS, "H": H, "SLOPE": SLOPE, "is_basin": is_basin}
 
 
+def _draw_natgeo_north_arrow(ax, x_c: float, y_c: float, length_m: float = 3600.0):
+    """Draw a classical two-tone cartographic compass arrow pointing toward true geographic North.
+
+    In EPSG:3031 at Allan Hills (~159.3 deg E), radial outward from South Pole (true North)
+    points along (sin(lon), cos(lon)) = (+0.352, -0.936).
+    """
+    nx, ny = 0.352, -0.936  # unit vector toward true geographic North
+    px, py = -ny, nx        # perpendicular (left of North = true West)
+    tip = np.array([x_c + 0.58 * length_m * nx, y_c + 0.58 * length_m * ny])
+    tail = np.array([x_c - 0.42 * length_m * nx, y_c - 0.42 * length_m * ny])
+    notch = np.array([x_c - 0.25 * length_m * nx, y_c - 0.25 * length_m * ny])
+    wing = 0.175 * length_m
+    left_pt = tail + wing * np.array([px, py])
+    right_pt = tail - wing * np.array([px, py])
+
+    # Classical split spearhead (dark charcoal left half, crisp white right half)
+    poly_l = MplPolygon([tip, left_pt, notch], closed=True, fc="#2B231D", ec="#2B231D", lw=0.7, zorder=10)
+    poly_r = MplPolygon([tip, right_pt, notch], closed=True, fc="#FAF8F3", ec="#2B231D", lw=0.7, zorder=10)
+    ax.add_patch(poly_l)
+    ax.add_patch(poly_r)
+
+    lbl_pos = tip + 0.28 * length_m * np.array([nx, ny])
+    halo = [pe.withStroke(linewidth=2.4, foreground="#FAF8F3", alpha=0.92)]
+    ax.text(
+        lbl_pos[0], lbl_pos[1], "N",
+        ha="center", va="center", fontsize=9.5, fontweight="bold",
+        fontfamily="DejaVu Serif", color="#2B231D", path_effects=halo, zorder=11,
+    )
+
+
+def _draw_natgeo_scalebar(ax, x_left: float, y_bot: float, total_km: float = 10.0) -> tuple[float, float, float, float]:
+    """Draw a clean classical alternating-segment cartographic scale bar (0 - 5 - 10 km).
+
+    Returns its padded bounding box (x0, y0, x1, y1) for label-collision avoidance.
+    """
+    seg_m = (total_km / 2.0) * 1000.0
+    h_m = 520.0
+    halo = [pe.withStroke(linewidth=2.2, foreground="#FAF8F3", alpha=0.92)]
+    bx0, by0 = x_left - 900.0, y_bot - 900.0
+    bw, bh = total_km * 1000.0 + 2550.0, 2750.0
+    # Subtle backing with generous right padding for "10 km"
+    ax.add_patch(
+        Rectangle((bx0, by0), bw, bh, fc="#FAF8F3", ec="0.45", lw=0.55, alpha=0.88, zorder=9)
+    )
+    ax.add_patch(Rectangle((x_left, y_bot), seg_m, h_m, fc="#2B231D", ec="#2B231D", lw=0.7, zorder=10))
+    ax.add_patch(Rectangle((x_left + seg_m, y_bot), seg_m, h_m, fc="#FAF8F3", ec="#2B231D", lw=0.7, zorder=10))
+    for frac, txt in ((0.0, "0"), (0.5, f"{int(total_km/2)}"), (1.0, f"{int(total_km)} km")):
+        ax.text(
+            x_left + frac * total_km * 1000.0, y_bot + h_m + 300, txt,
+            ha="center", va="bottom", fontsize=7.6, fontfamily="DejaVu Serif",
+            color="#2B231D", path_effects=halo, zorder=11,
+        )
+    return (bx0 - 1400.0, by0 - 1200.0, bx0 + bw + 1400.0, by0 + bh + 1800.0)
+
+
+def _draw_subtle_graticule(
+    ax,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    avoid_xy: tuple[float, float] | None = None,
+    avoid_boxes: list[tuple[float, float, float, float]] | None = None,
+):
+    """Draw whisper-thin lat/lon graticule lines with delicate cartographic labels along the neatlines."""
+    tf_fwd = Transformer.from_crs("EPSG:4326", "EPSG:3031", always_xy=True)
+    halo = [pe.withStroke(linewidth=1.8, foreground="#FAF8F3", alpha=0.88)]
+    lats_deg = [-76.5, -76.666667, -76.833333, -77.0]
+    lat_lbls = ["76°30′S", "76°40′S", "76°50′S", "77°00′S"]
+    lons_deg = [158.0, 158.5, 159.0, 159.5, 160.0]
+    lon_lbls = ["158°00′E", "158°30′E", "159°00′E", "159°30′E", "160°00′E"]
+
+    def _clear_of_obstacles(px_val: float, py_val: float, min_dist: float) -> bool:
+        if avoid_xy is not None and math.hypot(px_val - avoid_xy[0], py_val - avoid_xy[1]) <= min_dist:
+            return False
+        for (x0, y0, x1, y1) in (avoid_boxes or []):
+            if x0 <= px_val <= x1 and y0 <= py_val <= y1:
+                return False
+        return True
+
+    lon_dense = np.linspace(157.5, 160.8, 220)
+    for lat, lbl in zip(lats_deg, lat_lbls):
+        xs_g, ys_g = tf_fwd.transform(lon_dense, np.full_like(lon_dense, lat))
+        ax.plot(xs_g, ys_g, color="#4A5D6E", ls="--", lw=0.45, alpha=0.36, zorder=2)
+        in_x = (xs_g >= xlim[0] + 1500) & (xs_g <= xlim[1] - 700) & (ys_g >= ylim[0] + 2200) & (ys_g <= ylim[1] - 2200)
+        if in_x.any():
+            cand = np.where(in_x)[0]
+            idx = cand[int(np.argmax(xs_g[cand]))]
+            if xs_g[idx] >= xlim[1] - 1600.0 and _clear_of_obstacles(xs_g[idx], ys_g[idx], 4500.0):
+                ax.text(
+                    xs_g[idx] - 300, ys_g[idx] + 350, lbl,
+                    ha="right", va="bottom", fontsize=6.4, fontfamily="DejaVu Serif",
+                    fontstyle="italic", color="#4A5D6E", alpha=0.82, path_effects=halo, zorder=3,
+                )
+
+    lat_dense = np.linspace(-77.2, -76.3, 220)
+    for lon, lbl in zip(lons_deg, lon_lbls):
+        xs_g, ys_g = tf_fwd.transform(np.full_like(lat_dense, lon), lat_dense)
+        ax.plot(xs_g, ys_g, color="#4A5D6E", ls="--", lw=0.45, alpha=0.36, zorder=2)
+        in_y = (xs_g >= xlim[0] + 3500) & (xs_g <= xlim[1] - 3500) & (ys_g >= ylim[0] + 1500) & (ys_g <= ylim[1] - 700)
+        if in_y.any():
+            cand = np.where(in_y)[0]
+            idx = cand[int(np.argmax(ys_g[cand]))]
+            if ys_g[idx] >= ylim[1] - 1400.0 and _clear_of_obstacles(xs_g[idx], ys_g[idx], 5000.0):
+                ax.text(
+                    xs_g[idx], ys_g[idx] - 250, lbl,
+                    ha="center", va="top", fontsize=6.4, fontfamily="DejaVu Serif",
+                    fontstyle="italic", color="#4A5D6E", alpha=0.82, path_effects=halo, zorder=3,
+                )
+
+
+def _draw_natgeo_placenames(ax, xlim: tuple[float, float], ylim: tuple[float, float], is_basin: bool):
+    """Draw uncluttered, National Geographic-inspired place-name cartography on Panel A."""
+    rock_col = "#2A221C"
+    ice_col = "#124670"
+    halo_soft = [pe.withStroke(linewidth=2.6, foreground="#FAF8F3", alpha=0.92)]
+    halo_bold = [pe.withStroke(linewidth=3.0, foreground="#FAF8F3", alpha=0.94)]
+
+    def in_frame(x, y, ha="center", pad_y=1200.0):
+        pad_l = 5200.0 if ha == "right" else (2400.0 if ha == "center" else 900.0)
+        pad_r = 5200.0 if ha == "left" else (2400.0 if ha == "center" else 900.0)
+        return (xlim[0] + pad_l <= x <= xlim[1] - pad_r) and (ylim[0] + pad_y <= y <= ylim[1] - pad_y)
+
+    # 1. Major landform title: A L L A N   H I L L S (tracked uppercase serif, aligned along massif)
+    ax_x, ax_y = 500300.0, -1356400.0
+    if (xlim[0] + 1800 <= ax_x <= xlim[1] - 1800) and (ylim[0] + 3500 <= ax_y <= ylim[1] - 3500):
+        ax.text(
+            ax_x, ax_y, "A L L A N   H I L L S",
+            fontsize=8.6, fontweight="bold", fontfamily="DejaVu Serif",
+            color=rock_col, rotation=64, ha="center", va="center",
+            path_effects=halo_bold, zorder=10,
+        )
+
+    # 2. Secondary rock landforms / ridges / nunataks (upright serif, warm charcoal)
+    carapace_pos = (501.4, -1338.8) if is_basin else (505.3, -1339.5)
+    carapace_ha = "right" if is_basin else "left"
+    rock_labels = [
+        ("Carapace\nNunatak", carapace_pos, carapace_ha, "center", 7.8, 0, None),
+        ("Battlements\nNunatak", (519.0, -1370.8), "center", "bottom", 7.8, 0, (518.6, -1373.2)),
+        ("Coombs\nHills", (495.2, -1347.5), "left", "bottom", 7.8, 0, None),
+        ("Tilman Ridge", (509.2, -1363.6), "left", "center", 7.0, 0, (507.2, -1363.6)),
+        ("Shipton\nRidge", (499.4, -1367.2), "right", "center", 7.0, 0, (501.3, -1366.6)),
+    ]
+    for txt, (txk, tyk), ha, va, fs, rot, tgt in rock_labels:
+        tx, ty = txk * 1e3, tyk * 1e3
+        if not in_frame(tx, ty, ha=ha):
+            continue
+        if tgt is not None:
+            if not (xlim[0] + 500 <= tgt[0] * 1e3 <= xlim[1] - 500 and ylim[0] + 500 <= tgt[1] * 1e3 <= ylim[1] - 500):
+                continue
+            ax.annotate(
+                txt, xy=(tgt[0] * 1e3, tgt[1] * 1e3), xytext=(tx, ty),
+                ha=ha, va=va, fontsize=fs, fontfamily="DejaVu Serif", color=rock_col,
+                path_effects=halo_soft, zorder=10,
+                arrowprops=dict(arrowstyle="-", color="#4A4038", lw=0.65, shrinkA=2, shrinkB=2),
+            )
+        else:
+            ax.text(
+                tx, ty, txt, ha=ha, va=va, fontsize=fs, fontfamily="DejaVu Serif",
+                color=rock_col, rotation=rot, path_effects=halo_soft, zorder=10,
+            )
+
+    # 3. Glaciers, blue-ice fields & informal sites (italic serif, glacial blue)
+    mw_pos = (527.2, -1336.6) if is_basin else (527.4, -1338.2)
+    ice_labels = [
+        ("Main Icefield", (515.6, -1356.2), "left", "center", 8.6, 0, None),
+        ("Near Western\nIcefield", (525.0, -1349.6), "center", "top", 7.8, 0, None),
+        ("Middle Western\nIcefield", mw_pos, "center", "top", 7.8, 0, None),
+        ("Odell Glacier", (496.9, -1359.0), "center", "center", 7.6, 52, None),
+        ("Cul-de-sac", (509.2, -1348.2), "center", "bottom", 7.6, 0, (508.1, -1352.1)),
+        ("Manhaul Bay\n(Shimmering Icefield)", (509.4, -1372.0), "center", "top", 7.3, 0, (504.3, -1366.8)),
+    ]
+    for txt, (txk, tyk), ha, va, fs, rot, tgt in ice_labels:
+        tx, ty = txk * 1e3, tyk * 1e3
+        if not in_frame(tx, ty, ha=ha):
+            continue
+        if tgt is not None:
+            if not (xlim[0] + 500 <= tgt[0] * 1e3 <= xlim[1] - 500 and ylim[0] + 500 <= tgt[1] * 1e3 <= ylim[1] - 500):
+                continue
+            ax.annotate(
+                txt, xy=(tgt[0] * 1e3, tgt[1] * 1e3), xytext=(tx, ty),
+                ha=ha, va=va, fontsize=fs, fontfamily="DejaVu Serif", fontstyle="italic",
+                color=ice_col, path_effects=halo_soft, zorder=10,
+                arrowprops=dict(arrowstyle="-", color="#1F5680", lw=0.7, shrinkA=2, shrinkB=2),
+            )
+        else:
+            ax.text(
+                tx, ty, txt, ha=ha, va=va, fontsize=fs, fontfamily="DejaVu Serif",
+                fontstyle="italic", color=ice_col, rotation=rot, path_effects=halo_soft, zorder=10,
+            )
+
+
 def plot_fig_s8_domain(
     out_dir: Path,
     u_coarse,
@@ -1264,7 +1454,12 @@ def plot_fig_s8_domain(
     title_tag: str,
     grid_save_path: Path | None = None,
 ):
-    """3-panel Supplementary Fig. 8: (A) Ice velocity vectors over LIMA, (B) Surface slope, (C) Ice thickness."""
+    """4-panel (2x2) Supplementary Fig. 8:
+    (A) Place-name & geographic reference map over LIMA (NatGeo-inspired typography),
+    (B) Modeled surface ice velocity vectors over LIMA,
+    (C) Ice surface slope |grad s| & elevation contours,
+    (D) Ice thickness H.
+    """
     tf = Transformer.from_crs("EPSG:4326", "EPSG:3031", always_xy=True)
     bx, by = tf.transform(boreholes_df["E"].to_numpy(float), boreholes_df["S"].to_numpy(float))
 
@@ -1284,7 +1479,6 @@ def plot_fig_s8_domain(
         lima_img = src1.read()
         lima_tf = src1.transform
 
-    poly = None
     px = py = None
     if is_basin:
         gj = json.loads((inp / "allan_hills_rema_basin.geojson").read_text(encoding="utf-8"))
@@ -1293,36 +1487,45 @@ def plot_fig_s8_domain(
         xlim = (494000, 533000)
         ylim = (-1376500, -1326500)
         leg_loc = "lower right"
-        qk_xy = (0.16, 0.05)
+        qk_xy = (0.16, 0.052)
+        fig_size = (12.4, 14.0)
+        cb_shrink = 0.80
+        north_xy = (496800.0, -1332400.0)
+        scale_xy = (520600.0, -1375000.0)
     else:
         xlim = (497500, 537500)
         ylim = (-1370000, -1335000)
         leg_loc = "upper right"
         qk_xy = (0.16, 0.06)
+        fig_size = (13.4, 11.4)
+        cb_shrink = 0.78
+        north_xy = (534400.0, -1338200.0)
+        scale_xy = (524400.0, -1368400.0)
 
-    fig_h = 6.8 if is_basin else 5.4
-    cb_shrink = 0.78 if is_basin else 0.76
-    fig, axes = plt.subplots(1, 3, figsize=(17.5, fig_h), sharex=True, sharey=True, layout="constrained")
-    halo_k = [pe.withStroke(linewidth=2.6, foreground="black", alpha=0.65)]
+    fig, axes = plt.subplots(2, 2, figsize=fig_size, sharex=True, sharey=True, layout="constrained")
+    ax_a, ax_b = axes[0, 0], axes[0, 1]
+    ax_c, ax_d = axes[1, 0], axes[1, 1]
     halo_w = [pe.withStroke(linewidth=2.8, foreground="white", alpha=0.9)]
 
-    def draw_domain_overlays(ax, add_legend: bool = False):
+    def draw_domain_overlays(ax, add_legend: bool = False, subtle: bool = False):
         leg_h = []
+        lw_c = 1.5 if subtle else 2.0
+        lw_f = 1.5 if subtle else 1.9
         if is_basin:
-            ax.plot(px, py, color="steelblue", ls="-", lw=2.0, path_effects=halo_w, zorder=6)
+            ax.plot(px, py, color="steelblue", ls="-", lw=lw_c, path_effects=halo_w, zorder=6)
             ax.add_patch(
                 Rectangle(
                     (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
-                    fill=False, ec="0.25", ls=":", lw=1.3, path_effects=halo_w, zorder=5,
+                    fill=False, ec="0.30", ls=":", lw=1.1 if subtle else 1.3, path_effects=halo_w, zorder=5,
                 )
             )
             leg_h.append(Line2D([0], [0], color="steelblue", lw=2.0, label="REMA basin domain"))
-            leg_h.append(Line2D([0], [0], color="0.25", ls=":", lw=1.4, label="Original 1600 m rect."))
+            leg_h.append(Line2D([0], [0], color="0.30", ls=":", lw=1.4, label="Original 1600 m rect."))
         else:
             ax.add_patch(
                 Rectangle(
                     (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
-                    fill=False, ec="steelblue", ls="-", lw=2.0, path_effects=halo_w, zorder=6,
+                    fill=False, ec="steelblue", ls="-", lw=lw_c, path_effects=halo_w, zorder=6,
                 )
             )
             leg_h.append(Line2D([0], [0], color="steelblue", lw=2.0, label="Coarse domain (1600 m)"))
@@ -1330,19 +1533,26 @@ def plot_fig_s8_domain(
         ax.add_patch(
             Rectangle(
                 (506902.38, -1356284.47), 512046.01 - 506902.38, -1350629.26 - (-1356284.47),
-                fill=False, ec="#D62728", ls="--", lw=1.9, path_effects=halo_w, zorder=7,
+                fill=False, ec="#D62728", ls="--", lw=lw_f, path_effects=halo_w, zorder=7,
             )
         )
-        ax.scatter(bx, by, marker="o", s=26, fc="#D62728", ec="white", lw=0.7, zorder=9)
+        ax.scatter(bx, by, marker="o", s=22 if subtle else 26, fc="#D62728", ec="white", lw=0.7, zorder=9)
         leg_h.append(Line2D([0], [0], color="#D62728", ls="--", lw=1.9, label="Fine mesh (80 m)"))
         leg_h.append(Line2D([0], [0], marker="o", ls="none", ms=5.5, mfc="#D62728", mec="black", mew=0.5, label="Boreholes"))
         if add_legend:
-            ax.legend(handles=leg_h, loc=leg_loc, fontsize=7.8, framealpha=0.92, facecolor="white", edgecolor="0.4")
+            ax.legend(handles=leg_h, loc=leg_loc, fontsize=8.0, framealpha=0.92, facecolor="white", edgecolor="0.4")
 
-    # --- Panel A: Surface ice velocity vectors over unobstructed LIMA imagery ---
-    ax0 = axes[0]
-    rasterio_show(lima_img, ax=ax0, transform=lima_tf)
-    # Sample uniform 1600 m vector grid (every 8th cell of 200 m grid) so spacing is clean & even everywhere
+    # --- Panel A: Clean Geographic Reference & Place Names (NatGeo-inspired cartography) ---
+    rasterio_show(lima_img, ax=ax_a, transform=lima_tf)
+    scale_box = _draw_natgeo_scalebar(ax_a, scale_xy[0], scale_xy[1], total_km=10.0)
+    _draw_subtle_graticule(ax_a, xlim, ylim, avoid_xy=north_xy, avoid_boxes=[scale_box])
+    draw_domain_overlays(ax_a, add_legend=False, subtle=True)
+    _draw_natgeo_placenames(ax_a, xlim, ylim, is_basin)
+    _draw_natgeo_north_arrow(ax_a, north_xy[0], north_xy[1], length_m=3600.0)
+    ax_a.set_title("A. Allan Hills Region & Place Names", fontsize=11)
+
+    # --- Panel B: Surface ice velocity vectors over unobstructed LIMA imagery ---
+    rasterio_show(lima_img, ax=ax_b, transform=lima_tf)
     step_q = 8
     XX_q, YY_q = np.meshgrid(gx[::step_q], gy[::step_q])
     U_q = U[::step_q, ::step_q]
@@ -1351,33 +1561,31 @@ def plot_fig_s8_domain(
     ok_q = np.isfinite(U_q) & np.isfinite(V_q)
     p95 = float(np.percentile(S_q[ok_q], 95)) if ok_q.any() else 1.0
     q_scale = max(p95 * 11.5, 0.5)
-    q_c = ax0.quiver(
+    q_c = ax_b.quiver(
         XX_q[ok_q], YY_q[ok_q], U_q[ok_q], V_q[ok_q],
         color="navy", alpha=0.88, scale=q_scale, width=0.0042,
         headwidth=3.8, headlength=4.5, zorder=5,
     )
     key_val = round(max(p95, 0.1), 1)
-    # Crisp white backdrop box for quiverkey so it's readable over LIMA
     qk_box_x = xlim[0] + 0.03 * (xlim[1] - xlim[0])
     qk_box_y = ylim[0] + 0.02 * (ylim[1] - ylim[0])
-    ax0.add_patch(
+    ax_b.add_patch(
         Rectangle(
             (qk_box_x, qk_box_y), 0.30 * (xlim[1] - xlim[0]), 0.065 * (ylim[1] - ylim[0]),
             fc="white", ec="0.4", lw=0.7, alpha=0.92, zorder=8,
         )
     )
-    qk = ax0.quiverkey(q_c, qk_xy[0], qk_xy[1], key_val, f"{key_val:.1f} m yr$^{{-1}}$", labelpos="E", coordinates="axes", fontproperties={"size": 8.2})
+    qk = ax_b.quiverkey(q_c, qk_xy[0], qk_xy[1], key_val, f"{key_val:.1f} m yr$^{{-1}}$", labelpos="E", coordinates="axes", fontproperties={"size": 8.4})
     qk.set_zorder(10)
-    draw_domain_overlays(ax0, add_legend=True)
-    ax0.set_title(f"A. Modeled Surface Velocity (E = {e_scale:.2f})", fontsize=10.5)
+    draw_domain_overlays(ax_b, add_legend=True, subtle=False)
+    ax_b.set_title(f"B. Modeled Surface Velocity (E = {e_scale:.2f})", fontsize=11)
 
-    # --- Panel B: Ice surface slope |grad s| ---
-    ax1 = axes[1]
-    rasterio_show(lima_img, ax=ax1, transform=lima_tf)
+    # --- Panel C: Ice surface slope |grad s| & elevation contours ---
+    rasterio_show(lima_img, ax=ax_c, transform=lima_tf)
     cmap_slp = plt.get_cmap("YlOrRd").copy()
     cmap_slp.set_bad((0.0, 0.0, 0.0, 0.0))
     slp_plot = np.where(np.isfinite(SLOPE), np.maximum(SLOPE, 0.001), np.nan)
-    im_s = ax1.pcolormesh(
+    im_s = ax_c.pcolormesh(
         gx, gy, slp_plot,
         cmap=cmap_slp,
         norm=mcolors.LogNorm(vmin=0.002, vmax=0.10),
@@ -1388,21 +1596,20 @@ def plot_fig_s8_domain(
     if np.isfinite(ZS).any():
         z_lo = int(math.floor(np.nanmin(ZS) / 100.0) * 100)
         z_hi = int(math.ceil(np.nanmax(ZS) / 100.0) * 100)
-        cs = ax1.contour(gx, gy, ZS, levels=np.arange(z_lo, z_hi + 1, 100.0), colors="0.2", linewidths=0.45, alpha=0.55, zorder=3)
-        ax1.clabel(cs, fmt="%d m", fontsize=6.5, inline=True, inline_spacing=4)
-    draw_domain_overlays(ax1, add_legend=False)
-    ax1.set_title("B. Ice Surface Slope |∇s| & Elevation", fontsize=10.5)
-    cb_s = fig.colorbar(im_s, ax=ax1, shrink=cb_shrink, pad=0.02, extend="both")
+        cs = ax_c.contour(gx, gy, ZS, levels=np.arange(z_lo, z_hi + 1, 100.0), colors="0.2", linewidths=0.45, alpha=0.55, zorder=3)
+        ax_c.clabel(cs, fmt="%d m", fontsize=6.5, inline=True, inline_spacing=4)
+    draw_domain_overlays(ax_c, add_legend=False, subtle=False)
+    ax_c.set_title("C. Ice Surface Slope |∇s| & Elevation", fontsize=11)
+    cb_s = fig.colorbar(im_s, ax=ax_c, shrink=cb_shrink, pad=0.02, extend="both")
     cb_s.set_label(r"Surface slope $|\nabla_h s|$ (m m$^{-1}$)")
     cb_s.set_ticks([0.002, 0.005, 0.01, 0.02, 0.05, 0.10])
     cb_s.ax.set_yticklabels(["0.002", "0.005", "0.01", "0.02", "0.05", "0.10"])
 
-    # --- Panel C: Ice thickness H = s - b ---
-    ax2 = axes[2]
-    rasterio_show(lima_img, ax=ax2, transform=lima_tf)
+    # --- Panel D: Ice thickness H = s - b ---
+    rasterio_show(lima_img, ax=ax_d, transform=lima_tf)
     cmap_h = plt.get_cmap("viridis").copy()
     cmap_h.set_bad((0.0, 0.0, 0.0, 0.0))
-    im_h = ax2.pcolormesh(
+    im_h = ax_d.pcolormesh(
         gx, gy, H,
         cmap=cmap_h,
         vmin=0.0,
@@ -1411,20 +1618,23 @@ def plot_fig_s8_domain(
         alpha=1.0,
         zorder=2,
     )
-    draw_domain_overlays(ax2, add_legend=False)
-    ax2.set_title("C. Ice Thickness H", fontsize=10.5)
-    cb_h = fig.colorbar(im_h, ax=ax2, shrink=cb_shrink, pad=0.02, extend="max")
+    draw_domain_overlays(ax_d, add_legend=False, subtle=False)
+    ax_d.set_title("D. Ice Thickness H", fontsize=11)
+    cb_h = fig.colorbar(im_h, ax=ax_d, shrink=cb_shrink, pad=0.02, extend="max")
     cb_h.set_label("Ice thickness H (m)")
 
-    for i_ax, ax in enumerate(axes):
-        ax.set_xlim(*xlim)
-        ax.set_ylim(*ylim)
-        ax.set_aspect("equal")
-        ax.set_xlabel("Easting (m, EPSG:3031)")
-        if i_ax == 0:
-            ax.set_ylabel("Northing (m, EPSG:3031)")
+    for r_i in range(2):
+        for c_i in range(2):
+            ax = axes[r_i, c_i]
+            ax.set_xlim(*xlim)
+            ax.set_ylim(*ylim)
+            ax.set_aspect("equal")
+            if r_i == 1:
+                ax.set_xlabel("Easting (m, EPSG:3031)")
+            if c_i == 0:
+                ax.set_ylabel("Northing (m, EPSG:3031)")
 
-    fig.suptitle(f"Supplementary Fig. 8: Coarse Domain Flow, Surface Slope & Ice Thickness ({title_tag})", fontsize=12)
+    fig.suptitle(f"Supplementary Fig. 8: Allan Hills Coarse Domain Geography, Flow, Slope & Thickness\n({title_tag})", fontsize=12.5)
     fig.savefig(out_dir / "C2_FigS06.png", dpi=240, bbox_inches="tight", pad_inches=0.08)
     fig.savefig(out_dir / "C2_FigS06.pdf", bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)

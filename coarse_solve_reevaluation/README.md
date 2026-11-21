@@ -48,7 +48,7 @@ The modern-day coarse drainage basin ([delineate_rema_basin.py](delineate_rema_b
 - Encloses the entire 80 m fine mesh (`min_dist = 1,486 m` on the western Allan Hills bedrock ridge, $4\text{–}7.5\ \mathrm{km}$ on the ice-covered sides) and all 54 regional + fine-mesh GNSS stakes.
 - Reduces median normalized cross-boundary slope flow $|\hat{\mathbf{u}}_{\mathrm{slope}} \cdot \mathbf{n}|$ from **$0.67$ ($42.0^\circ$ median crossing angle; $88\%$ of perimeter crossing flowlines)** on the original rectangle to **$0.10$ ($5.6^\circ$; $75.5\%$ tangent within $|\hat{\mathbf{u}}\cdot\mathbf{n}| \le 0.2$)** on the drainage basin (see [basin_geometry/basin_delineation_diagnostics.png](basin_geometry/basin_delineation_diagnostics.png)).
 - Meshes cleanly into 1,925 constrained Delaunay triangles (1,017 nodes, graded $800\text{–}1200\ \mathrm{m}$, extruded to 5 terrain-following layers: `429,654` `CG3/CG1` Stokes DOFs) in [basin_geometry/allan_hills_basin_2d.msh](basin_geometry/allan_hills_basin_2d.msh), using exact published BedMachine + radar DEMs inside the original coarse domain seamlessly cosine-feathered into REMA 500 m / Bedmap3 500 m outside.
-- Full-basin modeled surface velocity vectors over LIMA imagery alongside ice surface slope $|\nabla_h s|$ and ice thickness $H$ are shown in [figures/basin_glen/C2_FigS06.png](figures/basin_glen/C2_FigS06.png) (3-panel Supplementary Fig. 8) and compared directly against the rectangular coarse velocity vector fields in [figures/comparisons/compare_coarse_basin_velocities.png](figures/comparisons/compare_coarse_basin_velocities.png).
+- Full-basin geographic context & place names, modeled surface velocity vectors over LIMA imagery, ice surface slope $|\nabla_h s|$, and ice thickness $H$ are shown together in [figures/basin_glen/C2_FigS06.png](figures/basin_glen/C2_FigS06.png) (4-panel Supplementary Fig. 8) and compared directly against the rectangular coarse velocity vector fields in [figures/comparisons/compare_coarse_basin_velocities.png](figures/comparisons/compare_coarse_basin_velocities.png).
 
 ## Numerical Finding: Thermal Sidewall Boundary Condition
 
@@ -93,7 +93,7 @@ coarse_solve_reevaluation/
         ├── C2_FigS05.png  # SI Fig. 5 (Submerged ridge transect B-B')
         ├── FigS08.png     # SI Fig. 6 (Cul-de-sac transect C-C')
         ├── C2_FigS07.png  # SI Fig. 7 (Fine-mesh viscosity convergence)
-        ├── C2_FigS06.png  # SI Fig. 8 (3-panel: velocity vectors over LIMA, surface slope, ice thickness)
+        ├── C2_FigS06.png  # SI Fig. 8 (4-panel: place names, velocity vectors, surface slope, ice thickness)
         ├── C2_FigS09.png  # SI Fig. 9 (4-height 5/10/20/50 m sensitivity)
         └── C2_FigS10.png  # SI Fig. 10 (Spaulding observed vs modeled steady-geometry SMB)
 ```
