@@ -1513,14 +1513,7 @@ def plot_fig_s8_domain(
         lw_f = 1.5 if subtle else 1.9
         if is_basin:
             ax.plot(px, py, color="steelblue", ls="-", lw=lw_c, path_effects=halo_w, zorder=6)
-            ax.add_patch(
-                Rectangle(
-                    (502369.57, -1362201.48), 531866.83 - 502369.57, -1342728.25 - (-1362201.48),
-                    fill=False, ec="0.30", ls=":", lw=1.1 if subtle else 1.3, path_effects=halo_w, zorder=5,
-                )
-            )
             leg_h.append(Line2D([0], [0], color="steelblue", lw=2.0, label="REMA basin domain"))
-            leg_h.append(Line2D([0], [0], color="0.30", ls=":", lw=1.4, label="Original 1600 m rect."))
         else:
             ax.add_patch(
                 Rectangle(
@@ -1634,7 +1627,6 @@ def plot_fig_s8_domain(
             if c_i == 0:
                 ax.set_ylabel("Northing (m, EPSG:3031)")
 
-    fig.suptitle(f"Supplementary Fig. 8: Allan Hills Coarse Domain Geography, Flow, Slope & Thickness\n({title_tag})", fontsize=12.5)
     fig.savefig(out_dir / "C2_FigS06.png", dpi=240, bbox_inches="tight", pad_inches=0.08)
     fig.savefig(out_dir / "C2_FigS06.pdf", bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
